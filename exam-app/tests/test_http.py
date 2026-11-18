@@ -1,0 +1,249 @@
+# -*- coding: utf-8 -*-
+"""تست انتها-به-انتها روی HTTP: ورود، آزمون، ذخیره، ارسال، تصحیح، خروجی CSV.
+
+سرور را در پورت آزمایشی بالا می‌آورد و پس از تست می‌بندد.
+اجرا:  python3 tests/test_http.py
+"""
+import http.cookiejar
+import json
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
+
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
+TMP = tempfile.mkdtemp(prefix="vazheban-http-")
+DB_PATH = os.path.join(TMP, "exam.db")
+os.environ["VAZHEBAN_DB"] = DB_PATH
+
+
+def free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+class Client:
+    def __init__(self, base):
+        self.base = base
+        self.jar = http.cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+
+    def get(self, path):
+        return self.opener.open(self.base + path, timeout=15)
+
+    def post(self, path, data=None, raw=None):
+        if raw is None:
+            raw = urllib.parse.urlencode(data or {}).encode()
+        req = urllib.request.Request(self.base + path, data=raw, method="POST")
+        req.add_header("Content-Type", "application/json" if data is None else "application/x-www-form-urlencoded")
+        return self.opener.open(req, timeout=15)
+
+    def get_text(self, path):
+        with self.get(path) as r:
+            return r.status, r.read().decode("utf-8")
+
+
+class TestHTTP(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.port = free_port()
+        env = dict(os.environ, VAZHEBAN_DB=DB_PATH, PORT=str(cls.port))
+        env["PYTHONPATH"] = APP_DIR
+        # ساخت کاربران آزمایشی
+        subprocess.run([sys.executable, "manage.py", "create-users", "--participants", "2",
+                        "--grader", "t_grader", "--grader-password", "graderpass"],
+                       cwd=APP_DIR, env=env, check=True, capture_output=True)
+        cls.env = env
+        cls.proc = subprocess.Popen([sys.executable, "app.py"], cwd=APP_DIR, env=env,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cls.base = f"http://127.0.0.1:{cls.port}"
+        for _ in range(80):
+            try:
+                with urllib.request.urlopen(cls.base + "/health", timeout=1) as r:
+                    if r.status == 200:
+                        break
+            except Exception:
+                time.sleep(0.1)
+        else:
+            raise RuntimeError("سرور بالا نیامد")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proc.send_signal(signal.SIGTERM)
+        cls.proc.wait(timeout=10)
+        shutil.rmtree(TMP, ignore_errors=True)
+
+    def login(self, username, password):
+        c = Client(self.base)
+        try:
+            c.post("/login", {"username": username, "password": password})
+        except urllib.error.HTTPError as err:
+            self.assertNotEqual(err.code, 401, "ورود ناموفق")
+        return c
+
+    def test_01_bad_login(self):
+        c = Client(self.base)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            c.post("/login", {"username": "sup01", "password": "wrong"})
+        self.assertEqual(ctx.exception.code, 401)
+
+    def test_02_full_participant_flow(self):
+        c = self.login("sup01", self._password("sup01"))
+        status, html = c.get_text("/exam")
+        self.assertEqual(status, 200)
+        self.assertIn("شروع آزمون", html)
+        c.post("/exam/start")
+        status, html = c.get_text("/exam")
+        self.assertEqual(status, 200)
+        self.assertIn("کیس واژه‌بان", html)          # پنل کیس کنار سوال
+        self.assertIn("۳.۷ جعبهٔ فرمول", html)        # فرمول‌ها داخل کیس
+        self.assertIn("/static/exam.js", html)
+
+        answers = {
+            "A1": {"choice": "ب"}, "A2": {"choice": "ج"}, "A3": {"choice": "ب"},
+            "A4": {"choice": "ج"}, "A5": {"choice": "ب"}, "A6": {"choice": "الف"},
+            "A7": {"choice": "ج"}, "A8": {"choice": "ب"},
+            "B1": {"choices": ["الف", "ب", "د", "ه"]},
+            "C1": {"tf": False, "explain": "سود شرکت به پوشش هزینهٔ ثابت بستگی دارد."},
+            "C2": {"tf": True, "explain": "ماندگاری دو برابر می‌شود."},
+            "C3": {"tf": False, "explain": "TAM اندازهٔ فرصت است نه سودآوری."},
+            "D1": {"choice": "ب"}, "D2": {"choice": "د"}, "D3": {"choice": "الف"},
+            "D4": {"choice": "ه"}, "D5": {"choice": "ج"},
+            "E1": {"cac": "۳٬۰۰۰٬۰۰۰", "work": "۶۰۰٫۰۰۰٫۰۰۰ ÷ ۲۰۰"},
+            "E2": {"ltv_a": "۲۱۰۰۰۰۰۰", "ltv_c": "۲۸۳۵۰۰۰", "conclusion": "1"},
+            "F1": {"text": "مسئله عینی است، درد احساسی."},
+            "F2": {"text": "رقیب مشابه، جایگزین متفاوت."},
+            "G1": {"feature": "قابلیت ۲", "segment": "کاهش C", "price": "نه", "metric": "ریزش زیر ۶٪"},
+            "H1": {"situation": "دانشجو", "trigger": "ددلاین", "barriers": "ساعت و شهریه",
+                   "success": "پیشرفت رایتینگ", "quote": "ساعت ۱۹ با شیفتم نمی‌خوره"},
+            "I1": {"claims": ["2", "4"], "notes": "ترکیبی و TAM"},
+            "J1": {"segments": "A، B، C", "value": "نمره در زمان کمتر", "channels": "پرفورمنس",
+                   "relation": "پشتیبانی چت", "revenue": "اشتراک ماهانه", "resources": "مدرسان",
+                   "activities": "کلاس زنده", "partners": "دانشگاه", "costs": "دستمزد مدرس"},
+        }
+        for qid, payload in answers.items():
+            c.post("/api/answer", raw=json.dumps({"qid": qid, "payload": payload}).encode())
+
+        # ذخیره واقعی: صفحه دوباره خوانده شود و پاسخ‌ها برگردند
+        _, html = c.get_text("/exam")
+        self.assertIn("۳٬۰۰۰٬۰۰۰", html)  # در state ذخیره‌شده
+        c.post("/api/submit")
+        status, html = c.get_text("/exam")
+        self.assertEqual(status, 200)
+        self.assertIn("نتیجهٔ آزمون", html)
+        self.assertIn("در حال تصحیح", html)
+
+        # تلاش دوم پس از ارسال ممنوع
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            c.post("/api/answer", raw=json.dumps({"qid": "A1", "payload": {"choice": "الف"}}).encode())
+        self.assertEqual(ctx.exception.code, 403)
+        with c.get("/exam") as r:
+            self.assertIn("نتیجهٔ آزمون", r.read().decode("utf-8"))
+
+        # مصحح وارد شود و همهٔ سوال‌های دستی را نمره دهد
+        g = self.login("t_grader", "graderpass")
+        status, ghtml = g.get_text("/grader")
+        self.assertEqual(status, 200)
+        self.assertIn("کارشناس پشتیبانی ۰۱", ghtml)
+        import re
+        m = re.search(r"/grader/attempt/(\d+)", ghtml)
+        self.assertIsNotNone(m)
+        aid = int(m.group(1))
+        status, page = g.get_text(f"/grader/attempt/{aid}")
+        self.assertEqual(status, 200)
+        self.assertIn("روبریک تصحیح", page)
+        self.assertIn("پاسخ مرجع نمونه", page)
+
+        import db as dbmod
+        from exam_data import QUESTIONS
+        os.environ["VAZHEBAN_DB"] = DB_PATH
+        conn = dbmod.connect()
+        for q in QUESTIONS:
+            if q["manual"]:
+                scores = {c_["key"]: c_["max"] for c_ in q["rubric"]}
+                g.post("/api/score", raw=json.dumps(
+                    {"attempt_id": aid, "qid": q["id"], "scores": scores}).encode())
+        row = conn.execute("SELECT total_score, passed FROM attempts WHERE id=?", (aid,)).fetchone()
+        conn.close()
+        self.assertEqual(row["total_score"], 100)
+        self.assertEqual(row["passed"], 1)
+
+        # شرکت‌کننده نتیجهٔ نهایی را ببیند
+        _, final = c.get_text("/exam")
+        self.assertIn("نتیجهٔ نهایی است", final)
+        self.assertIn("قبول", final)
+
+        # خروجی CSV
+        with g.get("/grader/export.csv") as r:
+            data = r.read().decode("utf-8")
+        self.assertIn("نام کاربری", data)
+        self.assertIn("sup01", data)
+        self.assertIn("100", data)
+        with g.get("/grader/export-answers.csv") as r:
+            raw = r.read().decode("utf-8")
+        self.assertIn("C1", raw)
+
+    def test_03_participant_blocked_from_grader(self):
+        c = self.login("sup02", self._password("sup02"))
+        try:
+            with c.get("/grader") as r:
+                body = r.read().decode("utf-8")
+                status = r.status
+        except urllib.error.HTTPError as err:
+            body, status = err.read().decode("utf-8"), err.code
+        self.assertNotIn("پنل مصحح", body)
+        self.assertEqual(status, 404)
+
+    def test_04_timer_is_serverside(self):
+        c = self.login("sup02", self._password("sup02"))
+        c.post("/exam/start")
+        with c.get("/exam/time") as r:
+            data = json.loads(r.read().decode())
+        self.assertTrue(data["active"])
+        self.assertLessEqual(data["remaining"], 45 * 60)
+        self.assertGreater(data["remaining"], 44 * 60)
+
+    def test_05_persian_and_latin_numbers(self):
+        c = self.login("sup02", self._password("sup02"))
+        r = c.post("/api/answer", raw=json.dumps({"qid": "E1", "payload": {"cac": "3,000,000"}}).encode())
+        data = json.loads(r.read().decode())
+        self.assertEqual(data["auto"], 5)
+        r = c.post("/api/answer", raw=json.dumps({"qid": "E1", "payload": {"cac": "۳۰۰۰۰۰۰"}}).encode())
+        data = json.loads(r.read().decode())
+        self.assertEqual(data["auto"], 5)
+
+    @staticmethod
+    def _password(username):
+        # رمزها هنگام ساخت کاربران به تصادف تولید می‌شوند؛ در setUpClass نگه داشته می‌شوند
+        return TestHTTP.passwords[username]
+
+
+def main():
+    env = dict(os.environ, VAZHEBAN_DB=DB_PATH)
+    out = subprocess.run([sys.executable, "manage.py", "create-users", "--participants", "2",
+                          "--grader", "t_grader", "--grader-password", "graderpass"],
+                         cwd=APP_DIR, env=env, check=True, capture_output=True, text=True).stdout
+    passwords = {}
+    for line in out.strip().splitlines()[1:]:
+        parts = line.split(",")
+        if len(parts) >= 2:
+            passwords[parts[0]] = parts[1]
+    TestHTTP.passwords = passwords
+    unittest.main(module=__name__, argv=[sys.argv[0], "-v"])
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,24 @@
+[Unit]
+Description=Vazheban Exam (Noqte) — سامانهٔ آزمون واژه‌بان
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/vazheban-exam
+Environment=PORT=8090
+Environment=VAZHEBAN_DB=/var/lib/vazheban-exam/exam.db
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/vazheban-exam/app.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/vazheban-exam
+
+[Install]
+WantedBy=multi-user.target

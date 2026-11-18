@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+exam-app/data/
+*.db
+*.db-wal
+*.db-shm
