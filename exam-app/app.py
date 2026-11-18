@@ -9,6 +9,7 @@ import random
 import re
 import secrets
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -162,7 +163,6 @@ def login_usernames(conn):
 def render_login(conn=None, error="", notice=""):
     usernames = login_usernames(conn)
     options = "".join(f'<option value="{e(u)}">{e(u)}</option>' for u in usernames)
-    rows = max(4, min(6, len(usernames) + 1))
     body = f"""
     <header class="auth-header">
       {wordmark()}
@@ -191,11 +191,11 @@ def render_login(conn=None, error="", notice=""):
         <form method="post" action="/login" class="login-form">
           <label class="field">
             <span class="field-label">نام کاربری</span>
-            <select name="username" class="field-select username-list" size="{rows}" required autofocus>
+            <select name="username" class="field-select username-list" required autofocus>
               <option value="" disabled selected>— نام کاربری خود را از فهرست انتخاب کنید —</option>
               {options}
             </select>
-            <span class="field-help">با اسکرول بین نام‌ها، نام کاربری خودتان را انتخاب کنید.</span>
+            <span class="field-help">روی کادر بزنید و با اسکرول بین نام‌ها، نام کاربری خودتان را انتخاب کنید؛ پس از انتخاب، فهرست بسته می‌شود.</span>
           </label>
           <label class="field">
             <span class="field-label">رمز عبور</span>
@@ -349,6 +349,20 @@ def render_question(q, order, n):
     return head + stem + body
 
 
+def auto_submit_expired(conn):
+    """هر تلاشِ فعالی که مهلتش گذشته، خودکار ارسال و ذخیره می‌شود."""
+    now = int(time.time())
+    rows = conn.execute(
+        "SELECT id FROM attempts WHERE submitted_at IS NULL AND deadline <= ?", (now,)).fetchall()
+    for r in rows:
+        conn.execute("UPDATE attempts SET submitted_at=?, status='expired' WHERE id=? AND submitted_at IS NULL",
+                     (now, r["id"]))
+        conn.commit()
+        db.log_event(conn, r["id"], "auto_submit", "زمان آزمون تمام شد")
+        recompute_attempt(conn, r["id"])
+    return len(rows)
+
+
 def render_exam(user, attempt, answers):
     order = json.loads(attempt["order_json"])
     sections_html = []
@@ -377,27 +391,44 @@ def render_exam(user, attempt, answers):
         f'<button class="qnav" data-target="{q["id"]}" data-section="{q["section"]}">{e(q["id"])}</button>'
         for q in flat_questions)
 
+    resumed = int(time.time()) - attempt["started_at"] > 90
+    resume_note = ('<p class="resume-note">این ادامهٔ آزمون شماست؛ پاسخ‌های ذخیره‌شده برگشتند و زمان از لحظهٔ شروع بدون توقف ادامه دارد.</p>'
+                   if resumed else '')
+
     body = f"""
+    {resume_note}
+    <div class="timerbar">
+      <div class="timer" id="timer">--:--</div>
+      <div class="progresswrap"><div class="progress" id="progress"></div></div>
+      <div class="answered" id="answeredCount">۰ از ۲۵</div>
+      <button class="btn danger" id="submitBtn">ارسال نهایی</button>
+    </div>
     <div class="exam-layout">
-      <aside class="case-pane" id="casePane">
+      <div class="case-pane" id="casePane">
         <div class="case-head">
           <b>کیس واژه‌بان</b>
-          <button class="btn small" id="toggleCase">بستن/بازکردن</button>
+          <button class="btn small" id="toggleCase">بستن / بازکردن</button>
         </div>
+        <p class="case-lead">پیش از پاسخ دادن، این کیس را کامل بخوانید. متن کیس در تمام مدت آزمون همین‌جا در دسترس است.</p>
         <div class="case-body">{CASE_HTML}</div>
-      </aside>
-      <div class="exam-main">
-        <div class="timerbar">
-          <div class="timer" id="timer">--:--</div>
-          <div class="progresswrap"><div class="progress" id="progress"></div></div>
-          <div class="answered" id="answeredCount">۰ از ۲۵</div>
-          <button class="btn danger" id="submitBtn">ارسال نهایی</button>
+        <div class="case-foot">
+          <a class="btn primary" href="#qgrid">کیس را خواندم؛ رفتن به سوال‌ها ↓</a>
         </div>
+      </div>
+      <div class="exam-main">
+        <div class="answers-head" id="answersHead">سوال‌ها</div>
         <div class="qgrid" id="qgrid">{grid}</div>
         <div class="section-nav" id="sectionNav">
           {''.join(f'<a href="#sec-{s["id"]}">بخش {e(s["id"])}</a>' for s in SECTIONS)}
         </div>
         <div id="sections">{''.join(sections_html)}</div>
+      </div>
+    </div>
+    <div class="timeover" id="timeOver" role="alert" aria-live="assertive">
+      <div class="timeover-card">
+        <h2>وقت آزمون تمام شد</h2>
+        <p>زمان ۶۰ دقیقه‌ای آزمون به پایان رسید. پاسخ‌هایی که تا این لحظه ثبت شده بود، خودکار برای مصحح ارسال و ذخیره شد.</p>
+        <p class="muted">در حال باز کردن نتیجه…</p>
       </div>
     </div>
     <div class="modal-back" id="modalBack">
@@ -442,10 +473,19 @@ def render_result(user, attempt, section_scores, manual_pending):
     if total >= 65 and e_score < 6:
         cond_note = '<div class="alert error">شرط حداقلی بخش محاسبه (۶ از ۱۰) محقق نشده است.</div>'
 
+    expired = attempt["status"] == "expired"
+    expired_note = ""
+    if expired:
+        expired_note = f"""<div class="alert warn time-over">
+          <b>وقت آزمون تمام شد.</b> پاسخ‌هایی که تا این لحظه ثبت شده بود، خودکار برای مصحح ارسال و ذخیره شد.
+          سوالی که پیش از پایان زمان ذخیره نکرده‌اید در این نتیجه لحاظ نشده است.
+        </div>"""
+
     body = f"""
     <div class="card">
-      <h1>نتیجهٔ آزمون</h1>
-      <p class="muted">{e(user['display_name'])} — نسخهٔ {fa(VERSION)} — ارسال‌شده در {time.strftime('%Y-%m-%d %H:%M', time.localtime(attempt['submitted_at'] or time.time()))}</p>
+      <h1>{'وقت آزمون تمام شد' if expired else 'نتیجهٔ آزمون'}</h1>
+      <p class="muted">{e(user['display_name'])} — نسخهٔ {fa(VERSION)} — {'ارسال خودکار' if expired else 'ارسال‌شده'} در {time.strftime('%Y-%m-%d %H:%M', time.localtime(attempt['submitted_at'] or time.time()))}</p>
+      {expired_note}
       {f'<div class="alert ok">نتیجهٔ نهایی است.</div>' if not manual_pending else f'<div class="alert warn">بخش‌های تشریحی در حال تصحیح است. نمرهٔ خودکار {fmt(auto)} از {fa(AUTO_POINTS)}؛ نمرهٔ نهایی پس از تصحیح اعلام می‌شود.</div>'}
       {cond_note}
       <div class="score-hero">
@@ -886,6 +926,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         conn = db.connect()
         try:
+            auto_submit_expired(conn)
             self.route_get(conn)
         finally:
             conn.close()
@@ -893,6 +934,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         conn = db.connect()
         try:
+            auto_submit_expired(conn)
             self.route_post(conn)
         finally:
             conn.close()
@@ -1189,12 +1231,30 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error": "not_found"}, 404)
 
 
+def sweeper(stop, interval=20):
+    """حتی وقتی کسی به سرور وصل نیست، تلاش‌های منقضی را می‌بندد."""
+    while not stop.wait(interval):
+        try:
+            conn = db.connect()
+            try:
+                auto_submit_expired(conn)
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001 — سرویس نباید به‌خاطر یک خطای گذرا بخوابد
+            sys.stderr.write(f"auto-submit sweep failed: {exc}\n")
+
+
 def main():
     port = int(os.environ.get("PORT", "8090"))
     db.init_db()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     sys.stderr.write(f"vazheban exam listening on 127.0.0.1:{port}\n")
-    httpd.serve_forever()
+    stop = threading.Event()
+    threading.Thread(target=sweeper, args=(stop,), daemon=True).start()
+    try:
+        httpd.serve_forever()
+    finally:
+        stop.set()
 
 
 if __name__ == "__main__":

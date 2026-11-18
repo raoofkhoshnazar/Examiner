@@ -196,11 +196,9 @@ body.auth main { padding: 0; max-width: none; }
   outline: none; border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(23,107,84,.12);
 }
-.username-list { overflow-y: auto; scrollbar-width: thin; }
-.username-list option { padding: 9px 10px; border-radius: var(--radius-sm); }
-.username-list option:checked {
-  background: #dcebe2; color: var(--brand); font-weight: 700;
-}
+.username-list { cursor: pointer; }
+.username-list option { padding: 9px 10px; }
+.username-list option:checked { background: #dcebe2; color: var(--brand); font-weight: 700; }
 .field-help { font-size: 12px; color: var(--muted); line-height: 1.7; }
 .field input:focus {
   outline: none; border-color: var(--accent);
@@ -314,12 +312,12 @@ body.auth main { padding: 0; max-width: none; }
 }
 
 /* ---------------------------------------------------------------- exam */
-.exam-layout { display: grid; grid-template-columns: minmax(0, 46%) minmax(0, 54%); gap: 20px; align-items: start; }
+.exam-layout { display: grid; grid-template-columns: minmax(0, 46%) minmax(0, 54%); gap: 20px; align-items: start; margin-top: 16px; }
 .exam-main { min-width: 0; }
 .case-pane {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  position: sticky; top: 96px; max-height: calc(100vh - 120px);
+  position: sticky; top: 176px; max-height: calc(100vh - 200px);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .case-head {
@@ -330,6 +328,21 @@ body.auth main { padding: 0; max-width: none; }
 .case-head .btn { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.2); color: #fff; }
 .case-head .btn:hover { background: rgba(255,255,255,.2); }
 .case-body { overflow-y: auto; padding: 18px 22px; font-size: 13.5px; line-height: 1.9; color: var(--ink-2); }
+.case-lead {
+  margin: 0; padding: 12px 18px; font-size: 13px; color: var(--muted);
+  background: var(--tint); border-bottom: 1px solid var(--line);
+}
+.case-foot { padding: 14px 18px; border-top: 1px solid var(--line); background: var(--surface); }
+.case-foot .btn { width: 100%; justify-content: center; text-align: center; text-decoration: none; }
+.resume-note {
+  margin: 0 0 12px; padding: 10px 16px; font-size: 13px;
+  background: var(--tint); border: 1px solid #cfe0d4; border-radius: var(--radius);
+  color: #2c6b4f;
+}
+.answers-head {
+  font-family: "Estedad-VF", sans-serif; font-size: 17px; font-weight: 700;
+  color: var(--ink); margin: 0 0 4px; scroll-margin-top: 180px;
+}
 .case-body h2 { font-family: "Estedad-VF", sans-serif; font-size: 15px; color: var(--brand); margin: 20px 0 8px; }
 .case-body h2:first-child { margin-top: 0; }
 .case-body table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12.5px; }
@@ -350,7 +363,8 @@ body.auth main { padding: 0; max-width: none; }
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius-lg); padding: 12px 18px;
-  position: sticky; top: 96px; z-index: 30;
+  position: sticky; top: 96px; z-index: 55;
+  box-shadow: 0 8px 20px -16px rgba(21,63,50,.5);
 }
 .timer {
   font-family: "Estedad-VF", sans-serif;
@@ -362,7 +376,7 @@ body.auth main { padding: 0; max-width: none; }
 .progress { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 .answered { font-size: 13px; color: var(--muted); }
 
-.qgrid { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 8px; }
+.qgrid { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 8px; scroll-margin-top: 180px; }
 .qnav {
   width: 40px; height: 34px; border-radius: var(--radius-sm);
   border: 1px solid var(--line-2); background: var(--surface);
@@ -451,6 +465,20 @@ textarea { resize: vertical; }
 .modal { background: var(--surface); border-radius: var(--radius-lg); padding: 28px; max-width: 480px; width: 100%; }
 .modal h3 { font-size: 18px; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+.timeover {
+  position: fixed; inset: 0; z-index: 300; display: none;
+  align-items: center; justify-content: center; padding: 20px;
+  background: rgba(21,63,50,.72);
+}
+.timeover.show { display: flex; }
+.timeover-card {
+  background: var(--surface); border-radius: var(--radius-lg);
+  padding: 32px; max-width: 460px; text-align: center;
+}
+.timeover-card h2 { font-family: "Estedad-VF", sans-serif; font-size: 24px; color: var(--brand); margin-bottom: 10px; }
+.timeover-card p { font-size: 14px; color: var(--ink-2); margin: 8px 0; }
+.timeover-card p.muted { color: var(--muted); font-size: 13px; }
 
 /* ---------------------------------------------------------------- results */
 .score-hero { text-align: center; background: var(--brand); border-radius: var(--radius-lg); padding: 28px; color: #fff; margin: 16px 0; }
@@ -546,12 +574,26 @@ form.inline input[type=text] { width: auto; }
   .auth-title { font-size: 26px; }
   .auth-footer { padding: 20px; }
 
+  /* موبایل: نوار بالا همیشه چسبیده، اول کیس، بعد سوال‌ها */
+  .topbar { position: static; }
+  .timerbar {
+    position: sticky; top: 0; z-index: 70;
+    margin: 0 -12px 12px; padding: 8px 12px; gap: 10px;
+    border-radius: 0; border-inline: none; border-top: none;
+    background: var(--surface);
+  }
+  .timerbar .timer { font-size: 20px; min-width: 68px; }
+  .timerbar .progresswrap { min-width: 60px; }
+  .timerbar .answered { font-size: 12px; }
+  .timerbar #submitBtn { min-height: 38px; padding: 6px 14px; font-size: 13px; }
+
   .exam-layout { grid-template-columns: 1fr; }
-  .case-pane { position: static; max-height: none; order: 2; margin-bottom: 16px; }
-  .case-pane .case-body { max-height: 55vh; }
-  .exam-main { order: 1; }
-  .timerbar { position: static; }
-  .section-block { scroll-margin-top: 20px; padding: 16px; }
+  .case-pane { position: static; max-height: none; order: 1; margin-bottom: 20px; }
+  .case-pane .case-body { max-height: none; overflow: visible; font-size: 14px; }
+  .exam-main { order: 2; }
+  .answers-head { scroll-margin-top: 70px; }
+  .qgrid { margin-top: 0; scroll-margin-top: 70px; }
+  .section-block { scroll-margin-top: 110px; padding: 16px; }
   .match-table { font-size: 13px; }
   .match-left { width: 45%; }
   .rubric-row { grid-template-columns: 1fr 80px; }

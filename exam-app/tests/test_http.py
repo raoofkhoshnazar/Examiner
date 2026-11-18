@@ -225,6 +225,61 @@ class TestHTTP(unittest.TestCase):
         data = json.loads(r.read().decode())
         self.assertEqual(data["auto"], 5)
 
+    def _set_attempt_times(self, username, started_ago, deadline_in):
+        import sqlite3
+        now = int(time.time())
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        uid = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()[0]
+        conn.execute("UPDATE attempts SET started_at=?, deadline=? WHERE user_id=? AND submitted_at IS NULL",
+                     (now - started_ago, now + deadline_in, uid))
+        conn.commit()
+        conn.close()
+
+    def test_06_resume_keeps_timer_running(self):
+        """قطع اتصال و بازگشت: پاسخ‌ها می‌مانند و زمان از شروع ادامه دارد."""
+        c = self.login("sup02", self._password("sup02"))
+        c.post("/api/answer", raw=json.dumps({"qid": "A1", "payload": {"choice": "ب"}}).encode())
+        self._set_attempt_times("sup02", started_ago=300, deadline_in=3300)
+        again = self.login("sup02", self._password("sup02"))   # نشست تازه = برگشتن از قطعی
+        status, html = again.get_text("/exam")
+        self.assertEqual(status, 200)
+        self.assertIn("ادامهٔ آزمون", html)
+        self.assertIn('"choice": "ب"', html)                    # پاسخ ذخیره‌شده برگشته
+        with again.get("/exam/time") as r:
+            data = json.loads(r.read().decode())
+        self.assertTrue(data["active"])
+        self.assertLessEqual(data["remaining"], 3301)           # زمان متوقف نشده
+        self.assertGreater(data["remaining"], 3290)
+
+    def test_07_auto_submit_when_time_is_over(self):
+        """پایان زمان: ارسال خودکار، ذخیرهٔ پاسخ‌ها و پیام «وقت تمام شد»."""
+        c = self.login("sup02", self._password("sup02"))
+        self._set_attempt_times("sup02", started_ago=3600, deadline_in=-5)
+        with c.get("/exam/time") as r:
+            self.assertFalse(json.loads(r.read().decode())["active"])
+        status, html = c.get_text("/exam")
+        self.assertEqual(status, 200)
+        self.assertIn("وقت آزمون تمام شد", html)
+        import sqlite3
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        row = conn.execute(
+            "SELECT a.status, a.submitted_at FROM attempts a JOIN users u ON u.id=a.user_id "
+            "WHERE u.username='sup02'").fetchone()
+        ans = conn.execute(
+            "SELECT COUNT(*) FROM answers WHERE attempt_id=(SELECT id FROM attempts WHERE user_id="
+            "(SELECT id FROM users WHERE username='sup02'))").fetchone()[0]
+        conn.close()
+        self.assertEqual(row[0], "expired")
+        self.assertIsNotNone(row[1])
+        self.assertGreaterEqual(ans, 1)                         # پاسخ‌ها پاک نشدند
+
+    def test_08_login_lists_usernames(self):
+        with urllib.request.urlopen(self.base + "/login", timeout=10) as r:
+            html = r.read().decode("utf-8")
+        self.assertIn('<select name="username"', html)
+        self.assertIn('<option value="sup01">sup01</option>', html)
+        self.assertNotIn('size="6"', html)                      # فهرست بسته است، پس از انتخاب باز می‌شود
+
     @staticmethod
     def _password(username):
         # رمزها هنگام ساخت کاربران به تصادف تولید می‌شوند؛ در setUpClass نگه داشته می‌شوند

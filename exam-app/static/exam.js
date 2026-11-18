@@ -14,6 +14,29 @@
   // ------------------------------- state bootstrap
   (S.saved || {}) && Object.keys(S.saved).forEach((qid) => { answers[qid] = S.saved[qid] || {}; });
 
+  // پاسخ‌هایی که هنگام قطعی اتصال فقط در مرورگر ذخیره شده‌اند، برمی‌گردند
+  let restoredDraft = false;
+  function mergeDraft() {
+    let draft = null;
+    try { draft = JSON.parse(localStorage.getItem("vazheban_draft") || "null"); } catch (err) { draft = null; }
+    if (!draft || typeof draft !== "object") return;
+    const isEmpty = (v) => v == null || v === "" || (Array.isArray(v) && !v.length) ||
+      (typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
+    Object.keys(draft).forEach((qid) => {
+      if (!S.qids.includes(qid)) return;
+      const local = draft[qid] || {};
+      const server = answers[qid] || {};
+      Object.keys(local).forEach((field) => {
+        if (isEmpty(server[field]) && !isEmpty(local[field])) {
+          answers[qid] = answers[qid] || {};
+          answers[qid][field] = local[field];
+          restoredDraft = true;
+        }
+      });
+    });
+  }
+  mergeDraft();
+
   function setAnswer(qid, field, value) {
     answers[qid] = answers[qid] || {};
     answers[qid][field] = value;
@@ -211,6 +234,7 @@
     document.getElementById("modalCancel").addEventListener("click", () => modal.classList.remove("show"));
     document.getElementById("modalConfirm").addEventListener("click", async () => {
       submitted = true;
+      try { localStorage.removeItem("vazheban_draft"); } catch (e) {}
       try {
         await fetch("/api/submit", { method: "POST" });
       } catch (err) { /* خطای شبکه؛ سرور با مهلت خودش ارسال می‌کند */ }
@@ -247,8 +271,25 @@
     if (lastTick === 300) flash("۵ دقیقه باقی مانده است.");
     if (lastTick <= 0 && !submitted) {
       submitted = true;
-      fetch("/api/submit", { method: "POST" }).finally(() => { window.location.href = "/exam"; });
+      timeOver();
     }
+  }
+
+  // پایان زمان: سرور خودش آزمون را می‌بندد و ذخیره می‌کند؛ ما فقط خبر می‌دهیم
+  async function timeOver() {
+    const box = document.getElementById("timeOver");
+    if (box) box.classList.add("show");
+    for (let i = 0; i < 15; i++) {
+      try {
+        const r = await fetch("/exam/time");
+        if (r.ok) {
+          const d = await r.json();
+          if (!d.active) break;
+        }
+      } catch (err) { /* دوباره تلاش کن */ }
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    window.location.href = "/exam";
   }
 
   // همگام‌سازی زمان با سرور هر ۳۰ ثانیه
@@ -257,8 +298,10 @@
       const r = await fetch("/exam/time");
       if (r.ok) {
         const d = await r.json();
-        if (d.active && typeof d.remaining === "number") lastTick = d.remaining;
-        else if (!d.active && !submitted) window.location.href = "/exam";
+        if (d.active && typeof d.remaining === "number") {
+          lastTick = d.remaining;
+          if (lastTick <= 0 && !submitted) { submitted = true; timeOver(); }
+        } else if (!d.active && !submitted) window.location.href = "/exam";
       }
     } catch (err) { /* از زمان محلی استفاده کن */ }
   }
@@ -270,6 +313,10 @@
 
   restore();
   wire();
+  if (restoredDraft) {
+    flash("پاسخ‌های ذخیره‌نشدهٔ قبلی بازیابی شد و دوباره ذخیره می‌شود.");
+    setTimeout(() => { S.qids.forEach((qid) => save(qid)); }, 1200);
+  }
   tick();
   setInterval(tick, 1000);
   setInterval(syncTime, 30000);
