@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS answers (
     scorer_id INTEGER,
     scored_at INTEGER,
     updated_at INTEGER NOT NULL,
+    first_at INTEGER,
+    time_spent INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (attempt_id, qid)
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -74,9 +76,21 @@ def connect():
     return conn
 
 
+MIGRATIONS = [
+    ("answers", "first_at", "ALTER TABLE answers ADD COLUMN first_at INTEGER"),
+    ("answers", "time_spent", "ALTER TABLE answers ADD COLUMN time_spent INTEGER NOT NULL DEFAULT 0"),
+]
+
+
 def init_db():
     conn = connect()
     conn.executescript(SCHEMA)
+    # پایگاه‌داده‌های قبلی: ستون‌های تازه بدون از دست دادن داده اضافه می‌شوند
+    for _table, column, sql in MIGRATIONS:
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({_table})")}
+        if column not in cols:
+            conn.execute(sql)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_attempt ON events(attempt_id)")
     conn.commit()
     conn.close()
 
@@ -142,6 +156,18 @@ def session_user(conn, token):
 def delete_session(conn, token):
     conn.execute("DELETE FROM sessions WHERE token=?", (token,))
     conn.commit()
+
+
+def close_other_sessions(conn, user_id, keep_token):
+    """یک نشست فعال برای هر کاربر؛ ورود از دستگاه دیگر نشست قبلی را می‌بندد."""
+    ids = conn.execute(
+        "SELECT token FROM sessions WHERE user_id=? AND token<>?", (user_id, keep_token or "")).fetchall()
+    count = 0
+    for r in ids:
+        conn.execute("DELETE FROM sessions WHERE token=?", (r["token"],))
+        count += 1
+    conn.commit()
+    return count
 
 
 def log_event(conn, attempt_id, kind, detail=""):

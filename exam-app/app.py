@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 import db
 import grading
+import integrity
 from exam_data import (AUTO_POINTS, CASE_HTML, EXAM, MANUAL_POINTS, MODEL_ANSWERS, QUESTIONS,
                        QUESTIONS_BY_ID, SECTIONS, SECTION_POINTS, TOTAL_POINTS)
 
@@ -54,8 +55,10 @@ def fa_clock(seconds):
     m, s = divmod(seconds, 60)
     h, m = divmod(m, 60)
     if h:
-        return f"{fa(h)}:{fa(m):>2}:{fa(s):>2}".replace(" ", "۰")
-    return f"{fa(m):02d}:{fa(s):02d}"
+        text = f"{h}:{m:02d}:{s:02d}"
+    else:
+        text = f"{m:02d}:{s:02d}"
+    return text.translate(FA_DIGITS)
 
 
 def order_for(seed, participant_name):
@@ -239,6 +242,10 @@ def render_intro(user):
           <li>پاسخ‌ها هنگام نوشتن ذخیره می‌شوند؛ اگر اتصال قطع شد، به همان نقطه برمی‌گردید.</li>
           <li>پس از پایان زمان، پاسخ‌ها خودکار ارسال می‌شوند. شما فقط یک بار می‌توانید آزمون بدهید.</li>
           <li>بخش‌های تشریحی پس از آزمون با روبریک تصحیح می‌شوند؛ نمرهٔ نهایی پس از آن اعلام می‌شود.</li>
+          <li>هر پاسخ تشریحی باید حداقل {fa(integrity.MIN_TEXT_CHARS)} کاراکتر داشته باشد؛ تا آن حد، ارسال ممکن نیست.</li>
+          <li>کپی، چسباندن و کشیدن متن در صفحهٔ آزمون غیرفعال است و تلاش‌ها ثبت می‌شوند.</li>
+          <li>ورود هم‌زمان از دو دستگاه ممکن نیست؛ ورود دوم، نشست قبلی را می‌بندد.</li>
+          <li>صفحهٔ آزمون در حالت بسته‌شدن مرورگر محافظت می‌شود و خروج از صفحه ثبت می‌گردد.</li>
         </ul>
         <div class="notice">
           <b>شرط قبولی:</b> ۶۵ از ۱۰۰ و حداقل ۶ از ۱۰ در بخش محاسبهٔ ساده.
@@ -349,6 +356,9 @@ def render_question(q, order, n):
     return head + stem + body
 
 
+ALLOWED_EVENTS = {"blur", "paste", "copy", "cut", "screenshot"}
+
+
 def auto_submit_expired(conn):
     """هر تلاشِ فعالی که مهلتش گذشته، خودکار ارسال و ذخیره می‌شود."""
     now = int(time.time())
@@ -397,6 +407,7 @@ def render_exam(user, attempt, answers):
 
     body = f"""
     {resume_note}
+    <div class="recbar" aria-live="polite"><span class="recdot"></span> این آزمون در حال ثبت فعالیت است؛ کپی، چسباندن و گرفتن تصویر از صفحه غیرفعال است.</div>
     <div class="timerbar">
       <div class="timer" id="timer">--:--</div>
       <div class="progresswrap"><div class="progress" id="progress"></div></div>
@@ -447,11 +458,13 @@ def render_exam(user, attempt, answers):
         "serverNow": int(time.time()),
         "qids": [q["id"] for q in flat_questions],
         "sections": SECTION_POINTS,
+        "minChars": integrity.MIN_TEXT_CHARS,
+        "minCharQids": [q["id"] for q in flat_questions if integrity.min_char_fields(q)],
         "saved": answers,
       }, ensure_ascii=False)};
     </script>
     <script src="/static/exam.js"></script>"""
-    return page("آزمون — واژه‌بان", body, user, wide=True)
+    return page("آزمون — واژه‌بان", body, user, wide=True, variant="app taking-exam")
 
 
 def render_result(user, attempt, section_scores, manual_pending):
@@ -506,6 +519,35 @@ def render_result(user, attempt, section_scores, manual_pending):
 
 
 # ------------------------------------------------------------------ grader
+def attempt_health(conn, attempt_row):
+    """سلامت یک تلاش: رخدادها، زمان هر سوال و درصد تشابه با بقیه."""
+    answers = {r["qid"]: r for r in conn.execute(
+        "SELECT * FROM answers WHERE attempt_id=?", (attempt_row["id"],))}
+    events = conn.execute("SELECT * FROM events WHERE attempt_id=?", (attempt_row["id"],)).fetchall()
+    return integrity.health(attempt_row, answers, events)
+
+
+def similarity_for(conn):
+    """درصد تشابه هر شرکت‌کننده با بقیه (فقط تلاش‌های ارسال‌شده)."""
+    rows = conn.execute(
+        "SELECT a.id, a.user_id, u.display_name, u.username FROM attempts a "
+        "JOIN users u ON u.id=a.user_id WHERE a.submitted_at IS NOT NULL").fetchall()
+    participants = []
+    by_attempt = {}
+    for r in rows:
+        answers = {x["qid"]: json.loads(x["payload"]) for x in conn.execute(
+            "SELECT qid, payload FROM answers WHERE attempt_id=?", (r["id"],))}
+        texts = {q["id"]: integrity.answer_text(q, answers.get(q["id"]) or {}) for q in QUESTIONS}
+        p = {"id": r["id"], "name": r["display_name"] or r["username"], "texts": texts}
+        participants.append(p)
+        by_attempt[r["id"]] = p
+    return integrity.similarity_matrix(participants, QUESTIONS)
+
+
+LEVEL_BADGE = {"medium": "mid", "high": "low", "critical": "low"}
+LEVEL_CLASS = {"medium": "sim-medium", "high": "sim-high", "critical": "sim-critical"}
+
+
 def render_grader(user, conn):
     rows = conn.execute("""
       SELECT a.*, u.display_name, u.username,
@@ -515,15 +557,34 @@ def render_grader(user, conn):
     """).fetchall()
     manual_qids = [q["id"] for q in QUESTIONS if q["manual"] > 0]
     ph = ",".join("?" * len(manual_qids))
-    stats = {"total": 0, "submitted": 0, "graded": 0, "avg": 0.0, "passed": 0}
+    stats = {"total": 0, "submitted": 0, "graded": 0, "avg": 0.0, "passed": 0,
+             "flagged": 0, "paste": 0, "critical": 0}
+    sims = similarity_for(conn)
     out = []
     for a in rows:
         submitted = a["submitted_at"] is not None
+        sim = sims.get(a["id"], {})
         pending = conn.execute(
             f"SELECT COUNT(*) c FROM answers WHERE attempt_id=? AND qid IN ({ph}) AND manual_score IS NULL",
             (a["id"], *manual_qids)).fetchone()["c"]
         answered = conn.execute("SELECT COUNT(*) c FROM answers WHERE attempt_id=?", (a["id"],)).fetchone()["c"]
         status = "در حال آزمون" if not submitted else ("در انتظار تصحیح" if pending else "تصحیح‌شده")
+        h = attempt_health(conn, a)
+        warnings = integrity.flags(h, sim)
+        risky = [w for w in warnings if w[0] != "info"]
+        if risky:
+            stats["flagged"] += 1
+        if h["paste"]:
+            stats["paste"] += 1
+        if sim.get("level") == "critical":
+            stats["critical"] += 1
+        sim_cell = "—"
+        if submitted and sim:
+            sim_cell = (f'<span class="sim {LEVEL_CLASS.get(sim["level"], "")}">'
+                        f'{fmt(sim["max"])}٪</span>'
+                        f'<span class="muted small"> با {e(sim["with"])}</span>' if sim.get("with") else "—")
+        health_cell = (f'<a class="btn small{" warn" if risky else ""}" href="/grader/attempt/{a["id"]}#health">'
+                       f'{"⚠ " + fa(len(risky)) + " هشدار" if risky else "سالم"}</a>' if submitted else "—")
         out.append(f"""<tr>
           <td>{e(a['display_name'])}</td>
           <td>{e(a['username'])}</td>
@@ -533,6 +594,8 @@ def render_grader(user, conn):
           <td>{fmt(a['auto_score'])}</td>
           <td>{fmt(a['total_score'])}</td>
           <td>{'—' if pending or not submitted else ('قبول' if a['passed'] else 'رد')}</td>
+          <td>{sim_cell}</td>
+          <td>{health_cell}</td>
           <td>{'—' if not submitted else f'<a class="btn small" href="/grader/attempt/{a["id"]}">تصحیح</a>'}</td>
         </tr>""")
         if submitted:
@@ -554,14 +617,17 @@ def render_grader(user, conn):
         <div class="stat"><b>{fa(stats['graded'])}</b><span>تصحیح‌شده</span></div>
         <div class="stat"><b>{fmt(round(avg))}</b><span>میانگین نمره</span></div>
         <div class="stat"><b>{fa(stats['passed'])}</b><span>قبول</span></div>
+        <div class="stat"><b>{fa(stats['flagged'])}</b><span>با هشدار سلامت</span></div>
+        <div class="stat"><b>{fa(stats['paste'])}</b><span>تلاش برای چسباندن</span></div>
+        <div class="stat"><b>{fa(stats['critical'])}</b><span>تشابه بحرانی</span></div>
       </div>
       <div class="actions">
         <a class="btn primary" href="/grader/export.csv">دانلود اکسل (CSV) کامل</a>
         <a class="btn" href="/grader/export-answers.csv">دانلود پاسخ‌های خام</a>
       </div>
       <table class="table">
-        <thead><tr><th>نام</th><th>نام کاربری</th><th>زمان ارسال</th><th>وضعیت</th><th>پاسخ</th><th>خودکار</th><th>کل</th><th>نتیجه</th><th></th></tr></thead>
-        <tbody>{''.join(out) or '<tr><td colspan="9" class="muted">هنوز تلاشی ثبت نشده است.</td></tr>'}</tbody>
+        <thead><tr><th>نام</th><th>نام کاربری</th><th>زمان ارسال</th><th>وضعیت</th><th>پاسخ</th><th>خودکار</th><th>کل</th><th>نتیجه</th><th>تشابه</th><th>سلامت</th><th></th></tr></thead>
+        <tbody>{''.join(out) or '<tr><td colspan="11" class="muted">هنوز تلاشی ثبت نشده است.</td></tr>'}</tbody>
       </table>
     </div>"""
     return page("پنل مصحح — واژه‌بان", body, user, wide=True)
@@ -652,6 +718,8 @@ def render_grader_attempt(user, conn, attempt_id):
             payload = json.loads(row["payload"]) if row else {}
             blocks.append(render_grader_question(q, payload, row, attempt_id))
 
+    health_html = render_health_card(conn, a)
+
     body = f"""
     <div class="card wide-card">
       <div class="gradertop">
@@ -667,11 +735,76 @@ def render_grader_attempt(user, conn, attempt_id):
         </div>
       </div>
       <div class="grade-summary" id="gradeSummary">—</div>
+      {health_html}
       {''.join(blocks)}
     </div>
     <script>window.ATTEMPT_ID = {attempt_id};</script>
     <script src="/static/grader.js"></script>"""
     return page("تصحیح — واژه‌بان", body, user, wide=True)
+
+
+def render_health_card(conn, attempt_row):
+    """گزارش سلامت آزمون: زمان، رخدادها، زمان هر سوال و تشابه."""
+    answers = {r["qid"]: r for r in conn.execute(
+        "SELECT * FROM answers WHERE attempt_id=?", (attempt_row["id"],))}
+    events = conn.execute("SELECT * FROM events WHERE attempt_id=? ORDER BY id", (attempt_row["id"],)).fetchall()
+    h = integrity.health(attempt_row, answers, events)
+    sims = similarity_for(conn)
+    sim = sims.get(attempt_row["id"], {})
+    warnings = integrity.flags(h, sim)
+
+    warn_rows = "".join(
+        f'<li class="warn-item {w[0]}">{e(w[1])}</li>' for w in warnings
+    ) or '<li class="ok-item">هیچ نشانهٔ مشکوکی ثبت نشده است.</li>'
+
+    q_rows = []
+    for q in QUESTIONS:
+        row = answers.get(q["id"])
+        secs = int(row["time_spent"] or 0) if row else 0
+        if not row:
+            state = '<span class="muted">بی‌پاسخ</span>'
+        elif secs and secs < integrity.FAST_ANSWER_SECONDS:
+            state = f'<span class="badge low">{fa(secs)} ثانیه — شتاب‌زده</span>'
+        else:
+            state = '—'
+        q_rows.append(f"""<tr><td>{e(q['id'])}</td><td>{fa_clock(secs) if row else '—'}</td><td>{state}</td></tr>""")
+
+    sim_block = '<p class="muted">هنوز پاسخ ارسال‌شده‌ای برای مقایسه نیست.</p>'
+    if sim.get("with"):
+        sim_block = f"""
+        <div class="sim-hero {LEVEL_CLASS.get(sim['level'], '')}">
+          <b>{fmt(sim['max'])}٪</b>
+          <span>بیشترین تشابه با <b>{e(sim['with'])}</b> · میانگین تشابه {fmt(sim['avg'])}٪</span>
+        </div>
+        {f'<div class="alert {LEVEL_BADGE.get(sim["level"], "ok").replace("mid", "warn").replace("low", "error")}">'
+         f'<b>{e(integrity.LEVEL_LABEL[sim["level"]])}</b> — پاسخ‌های تشریحی این دو نفر بیشتر از '
+         f'{fa(integrity.SIM_MEDIUM if sim["level"] == "medium" else integrity.SIM_HIGH if sim["level"] == "high" else integrity.SIM_CRITICAL)}٪ مشابه است. '
+         'پیش از ثبت نمره، پاسخ‌ها را با هم مقایسه کنید.</div>' if sim["level"] else ''}"""
+
+    return f"""
+    <section class="healthcard" id="health">
+      <h2 class="health-title">گزارش سلامت آزمون</h2>
+      <div class="health-grid">
+        <div class="health-cell"><b>{fa_clock(h['duration'])}</b><span>مدت آزمون</span></div>
+        <div class="health-cell"><b>{fa(h['answered'])} / {fa(len(QUESTIONS))}</b><span>پاسخ داده‌شده</span></div>
+        <div class="health-cell"><b>{fa_clock(h['time_spent'])}</b><span>زمان صرف‌شده روی پاسخ‌ها</span></div>
+        <div class="health-cell"><b>{fa(h['tab_switches'])}</b><span>خروج از صفحه</span></div>
+        <div class="health-cell"><b>{fa(h['paste'])}</b><span>تلاش چسباندن</span></div>
+        <div class="health-cell"><b>{fa(h['copy'])}</b><span>تلاش کپی</span></div>
+        <div class="health-cell"><b>{fa(h['relogin'])}</b><span>ورود از دستگاه دیگر</span></div>
+        <div class="health-cell"><b>{fa(len(h['fast']))}</b><span>پاسخ شتاب‌زده</span></div>
+      </div>
+      <ul class="warnlist">{warn_rows}</ul>
+      <h3 class="subhead">تشابه پاسخ‌ها</h3>
+      {sim_block}
+      <details class="qtimes">
+        <summary>زمان‌سنجی هر سوال ({fa(len(answers))} پاسخ ثبت‌شده)</summary>
+        <table class="table compact">
+          <thead><tr><th>سوال</th><th>زمان صرف‌شده</th><th>وضعیت</th></tr></thead>
+          <tbody>{''.join(q_rows)}</tbody>
+        </table>
+      </details>
+    </section>"""
 
 
 def render_grader_question(q, payload, row, attempt_id):
@@ -771,8 +904,11 @@ def export_rows(conn):
     manual_qids = [q["id"] for q in QUESTIONS if q["manual"] > 0]
     ph = ",".join("?" * len(manual_qids))
     header = ["نام", "نام کاربری", "شروع", "ارسال", "نمرهٔ خودکار"] + [q["id"] for q in QUESTIONS] + \
-             ["نمرهٔ دستی", "نمرهٔ کل", "بخش E", "نتیجه"]
+             ["نمرهٔ دستی", "نمرهٔ کل", "بخش E", "نتیجه",
+              "بیشترین تشابه٪", "مشابه با", "تشابه میانگین٪", "سطح هشدار",
+              "خروج از صفحه", "تلاش چسباندن", "تلاش کپی", "ورود از دستگاه دیگر"]
     rows = [header]
+    sims = similarity_for(conn)
     attempts = conn.execute("SELECT a.*, u.display_name, u.username FROM attempts a JOIN users u ON u.id=a.user_id ORDER BY a.started_at").fetchall()
     for a in attempts:
         if not a["submitted_at"]:
@@ -801,8 +937,22 @@ def export_rows(conn):
                      time.strftime("%Y-%m-%d %H:%M", time.localtime(a["started_at"])),
                      time.strftime("%Y-%m-%d %H:%M", time.localtime(a["submitted_at"])),
                      a["auto_score"], *cells, a["manual_score"], a["total_score"], sec.get("E", 0),
-                     "قبول" if a["passed"] else "رد"])
+                     "قبول" if a["passed"] else "رد",
+                     *sim_cells(conn, a, sims)])
     return rows
+
+
+def sim_cells(conn, attempt_row, sims):
+    """چهار ستون تشابه و چهار ستون سلامت برای CSV."""
+    sim = sims.get(attempt_row["id"], {})
+    h = attempt_health(conn, attempt_row)
+    return [
+        _csv_num(sim.get("max") or 0) if sim.get("with") else "",
+        sim.get("with", ""),
+        _csv_num(sim.get("avg") or 0) if sim.get("with") else "",
+        integrity.LEVEL_LABEL.get(sim.get("level", ""), "سالم"),
+        h["tab_switches"], h["paste"], h["copy"], h["relogin"],
+    ]
 
 
 def export_raw_rows(conn):
@@ -1064,6 +1214,12 @@ class Handler(BaseHTTPRequestHandler):
             row = db.get_user_by_username(conn, username)
             if row and row["active"] and db.verify_password(password, row["password_hash"], row["salt"]):
                 token = db.create_session(conn, row["id"], days=2)
+                # هر کاربر فقط روی یک دستگاه: نشست‌های قبلی بسته می‌شوند
+                if db.close_other_sessions(conn, row["id"], token) and row["role"] == "participant":
+                    attempt = conn.execute(
+                        "SELECT id FROM attempts WHERE user_id=? AND submitted_at IS NULL", (row["id"],)).fetchone()
+                    if attempt:
+                        db.log_event(conn, attempt["id"], "relogin", "ورود از دستگاه دیگر")
                 home = "/admin" if row["role"] == "admin" else ("/grader" if row["role"] == "grader" else "/exam")
                 self.redirect(home, f"vb_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=172800")
             else:
@@ -1165,17 +1321,42 @@ class Handler(BaseHTTPRequestHandler):
             now = int(time.time())
             existing = conn.execute("SELECT * FROM answers WHERE attempt_id=? AND qid=?",
                                     (attempt["id"], qid)).fetchone()
+            # زمان صرف‌شده: از اولین پاسخ تا آخرین ویرایش روی همین سوال
+            first_at = (existing["first_at"] or existing["updated_at"]) if existing else now
+            if existing and existing["first_at"] is None:
+                first_at = existing["updated_at"]
+            time_spent = max(0, now - int(first_at)) if existing else 0
             if existing:
                 conn.execute(
-                    "UPDATE answers SET payload=?, auto_score=?, updated_at=? WHERE attempt_id=? AND qid=?",
-                    (json.dumps(payload, ensure_ascii=False), auto, now, attempt["id"], qid))
+                    "UPDATE answers SET payload=?, auto_score=?, updated_at=?, first_at=?, time_spent=? "
+                    "WHERE attempt_id=? AND qid=?",
+                    (json.dumps(payload, ensure_ascii=False), auto, now, first_at, time_spent,
+                     attempt["id"], qid))
             else:
                 conn.execute(
-                    "INSERT INTO answers (attempt_id, qid, payload, auto_score, updated_at) VALUES (?,?,?,?,?)",
-                    (attempt["id"], qid, json.dumps(payload, ensure_ascii=False), auto, now))
+                    "INSERT INTO answers (attempt_id, qid, payload, auto_score, updated_at, first_at, time_spent) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (attempt["id"], qid, json.dumps(payload, ensure_ascii=False), auto, now, now, 0))
             conn.commit()
             remain = attempt["deadline"] - now
-            self.send_json({"ok": True, "remaining": remain, "auto": auto})
+            keys = integrity.min_char_fields(q)
+            text_len = sum(len(str(payload.get(k) or "").strip()) for k in keys)
+            need = integrity.MIN_TEXT_CHARS if keys else 0
+            self.send_json({"ok": True, "remaining": remain, "auto": auto,
+                            "chars": text_len, "min_chars": need, "short": text_len < need})
+            return
+
+        if path == "/api/event":
+            attempt = conn.execute("SELECT * FROM attempts WHERE user_id=? AND submitted_at IS NULL",
+                                   (user["id"],)).fetchone()
+            body = self.read_json()
+            kind = str(body.get("kind") or "")
+            if kind not in ALLOWED_EVENTS or not attempt:
+                self.send_json({"ok": True})   # رخداد بی‌اثر؛ آزمون را متوقف نمی‌کند
+                return
+            detail = str(body.get("detail") or "")[:200]
+            db.log_event(conn, attempt["id"], kind, detail)
+            self.send_json({"ok": True})
             return
 
         if path == "/api/submit":
@@ -1184,6 +1365,18 @@ class Handler(BaseHTTPRequestHandler):
             if not attempt:
                 self.redirect("/exam")
                 return
+            body = self.read_json()
+            # ارسال دستی با پاسخ‌های کوتاه مسدود است؛ ارسال خودکار پایان زمان نه
+            if not body.get("auto"):
+                answers = {r["qid"]: json.loads(r["payload"])
+                           for r in conn.execute("SELECT qid, payload FROM answers WHERE attempt_id=?",
+                                                 (attempt["id"],))}
+                short = integrity.short_questions(QUESTIONS, answers)
+                if short:
+                    self.send_json({"error": "short_answers",
+                                    "min_chars": integrity.MIN_TEXT_CHARS,
+                                    "short": short[:10]}, 400)
+                    return
             conn.execute("UPDATE attempts SET submitted_at=?, status='submitted' WHERE id=?",
                          (int(time.time()), attempt["id"]))
             conn.commit()

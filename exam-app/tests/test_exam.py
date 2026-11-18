@@ -200,5 +200,55 @@ class TestFlow(unittest.TestCase):
         shutil.rmtree(TMP, ignore_errors=True)
 
 
+class TestIntegrity(unittest.TestCase):
+    def test_min_characters_rule(self):
+        import integrity
+        q = QUESTIONS_BY_ID["F1"]                     # تشریحی کوتاه
+        self.assertTrue(integrity.text_fields(q))
+        short = {"text": "خوب است"}
+        long = {"text": "مسئلهٔ اصلی تیم پشتیبانی این است که " * 2}
+        self.assertLess(integrity.text_length(q, short), integrity.MIN_TEXT_CHARS)
+        self.assertGreaterEqual(integrity.text_length(q, long), integrity.MIN_TEXT_CHARS)
+        short_ids = [x["id"] for x in integrity.short_questions(QUESTIONS, {"F1": short})]
+        self.assertIn("F1", short_ids)
+        self.assertNotIn("A1", short_ids)             # سوال گزینه‌ای حداقل کاراکتر ندارد
+
+    def test_choice_questions_need_no_text(self):
+        import integrity
+        self.assertEqual(integrity.text_fields(QUESTIONS_BY_ID["A1"]), [])
+        self.assertFalse(integrity.short_questions([QUESTIONS_BY_ID["A1"]], {}))
+
+    def test_normalize_persian(self):
+        import integrity
+        self.assertEqual(integrity.normalize("كيک ۱۰۰٪"), integrity.normalize("کیک 100٪"))
+        self.assertEqual(integrity.normalize("می‌رود"), "میرود")
+
+    def test_similarity_levels(self):
+        import integrity
+        identical = "ریزش سگمنت C به دلیل نبود پیگیری مدرس بین جلسه‌ها بالاست و باید داشبورد پیگیری اضافه شود."
+        self.assertGreaterEqual(integrity.similarity(identical, identical), 99)
+        self.assertLess(integrity.similarity(identical, "پاسخ کاملاً متفاوت دربارهٔ قیمت و تبلیغات است."), 30)
+
+        self.assertEqual(integrity.level(75), "medium")
+        self.assertEqual(integrity.level(85), "high")
+        self.assertEqual(integrity.level(95), "critical")
+        self.assertEqual(integrity.level(40), "")
+
+    def test_similarity_matrix_flags_pair(self):
+        import integrity
+        same = "پاسخ یکسان و طولانی دربارهٔ ریزش مشتری و داشبورد پیگیری مدرس که هر دو نفر نوشته‌اند." * 2
+        other = "متن کاملاً بی‌ربط دربارهٔ سربه‌سر و حاشیهٔ سود با اعداد متفاوت و استدلال دیگر." * 2
+        participants = [
+            {"id": 1, "name": "الف", "texts": {"F1": same}},
+            {"id": 2, "name": "ب", "texts": {"F1": same}},
+            {"id": 3, "name": "ج", "texts": {"F1": other}},
+        ]
+        sims = integrity.similarity_matrix(participants, QUESTIONS)
+        self.assertEqual(sims[1]["with"], "ب")
+        self.assertGreaterEqual(sims[1]["max"], 90)
+        self.assertEqual(sims[1]["level"], "critical")
+        self.assertEqual(sims[3]["level"], "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

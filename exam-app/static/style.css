@@ -404,7 +404,25 @@ body.auth main { padding: 0; max-width: none; }
 
 .qpanel { border-top: 1px solid var(--line); padding: 18px 0 20px; }
 .qpanel:first-of-type { border-top: none; }
-.qhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+.qhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.charcount { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.charcount.short { color: #a87400; }
+.charcount.ok { color: #2c6b4f; }
+.recbar {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 10px; padding: 8px 14px; font-size: 12.5px;
+  color: #2c6b4f; background: var(--tint); border: 1px solid #cfe0d4;
+  border-radius: var(--radius);
+}
+.recdot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--red);
+  animation: rec 1.6s infinite; flex-shrink: 0;
+}
+@keyframes rec { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+body.taking-exam { user-select: none; -webkit-user-select: none; }
+body.taking-exam textarea, body.taking-exam input[type="text"] {
+  user-select: text; -webkit-user-select: text;
+}
 .qbadge {
   background: var(--brand); color: #fff; border-radius: var(--radius-sm);
   padding: 2px 10px; font-size: 12px; font-weight: 700;
@@ -479,6 +497,45 @@ textarea { resize: vertical; }
 .timeover-card h2 { font-family: "Estedad-VF", sans-serif; font-size: 24px; color: var(--brand); margin-bottom: 10px; }
 .timeover-card p { font-size: 14px; color: var(--ink-2); margin: 8px 0; }
 .timeover-card p.muted { color: var(--muted); font-size: 13px; }
+
+/* ---------------------------------------------------------------- health */
+.healthcard {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); padding: 20px 22px; margin: 16px 0 22px;
+  scroll-margin-top: 110px;
+}
+.health-title { font-family: "Estedad-VF", sans-serif; font-size: 18px; color: var(--brand); margin-bottom: 12px; }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.health-cell {
+  background: var(--surface-soft); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column;
+}
+.health-cell b { font-family: "Estedad-VF", sans-serif; font-size: 18px; color: var(--ink); }
+.health-cell span { font-size: 11.5px; color: var(--muted); }
+.warnlist { list-style: none; padding: 0; margin: 14px 0; display: flex; flex-direction: column; gap: 6px; }
+.warnlist li { font-size: 13px; padding: 8px 12px; border-radius: var(--radius-sm); }
+.warnlist .warn-item { background: #fdf3d9; color: #8a6100; }
+.warnlist .warn-item.high { background: #fbeaea; color: #a83232; }
+.warnlist .warn-item.critical { background: #f7dcdc; color: #7d1f1f; border: 1px solid #e8bcbc; font-weight: 700; }
+.warnlist .warn-item.info { background: var(--tint); color: #355845; }
+.warnlist .ok-item { background: var(--tint); color: #2c6b4f; }
+.sim-hero {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  background: var(--surface-soft); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 10px 14px; margin-bottom: 8px;
+}
+.sim-hero b { font-family: "Estedad-VF", sans-serif; font-size: 24px; color: var(--brand); }
+.sim-hero span { font-size: 13px; color: var(--muted); }
+.sim-hero.sim-medium { border-color: #ecdca6; background: #fdf9ec; }
+.sim-hero.sim-high { border-color: #ecc8c8; background: #fdf1f1; }
+.sim-hero.sim-critical { border-color: #d9a3a3; background: #f9e7e7; }
+.sim { font-weight: 700; }
+.sim.sim-medium { color: #8a6100; }
+.sim.sim-high { color: #a83232; }
+.sim.sim-critical { color: #7d1f1f; text-decoration: underline; }
+.qtimes summary { cursor: pointer; font-size: 13px; color: var(--accent); margin: 10px 0 6px; }
+.table.compact th, .table.compact td { padding: 5px 8px; font-size: 12.5px; }
+.btn.warn { border-color: #ecdca6; background: #fdf3d9; color: #8a6100; }
 
 /* ---------------------------------------------------------------- results */
 .score-hero { text-align: center; background: var(--brand); border-radius: var(--radius-lg); padding: 28px; color: #fff; margin: 16px 0; }
@@ -582,6 +639,7 @@ form.inline input[type=text] { width: auto; }
     border-radius: 0; border-inline: none; border-top: none;
     background: var(--surface);
   }
+  .recbar { margin: -4px 0 8px; font-size: 11.5px; }
   .timerbar .timer { font-size: 20px; min-width: 68px; }
   .timerbar .progresswrap { min-width: 60px; }
   .timerbar .answered { font-size: 12px; }

@@ -109,6 +109,108 @@
     document.getElementById("progress").style.width = (done / S.qids.length * 100) + "%";
   }
 
+  // ------------------------------- ممنوعیت کپی/پیست
+  const MIN_CHARS = S.minChars || 50;
+
+  function report(kind, detail) {
+    if (submitted) return;
+    try {
+      fetch("/api/event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: kind, detail: detail || "" }),
+      });
+    } catch (err) { /* ثبت رخداد نباید آزمون را متوقف کند */ }
+  }
+
+  function isEditable(el) {
+    return el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.type === "text"));
+  }
+
+  function blockedNotice(what) {
+    flash(what + " در این آزمون غیرفعال است.");
+  }
+
+  function wireClipboard() {
+    ["copy", "cut", "paste"].forEach((evt) => {
+      document.addEventListener(evt, (ev) => {
+        const el = ev.target;
+        if (evt === "paste" || isEditable(el)) {
+          ev.preventDefault();
+          report(evt, el && el.dataset ? (el.dataset.qid || "") : "");
+          blockedNotice(evt === "paste" ? "چسباندن متن" : "کپی متن");
+          return;
+        }
+        // کپی متن کیس یا سوال هم ممنوع است
+        ev.preventDefault();
+        report(evt, "page");
+        blockedNotice(evt === "paste" ? "چسباندن متن" : "کپی متن");
+      }, true);
+    });
+    // کشیدن و رها کردن متن (drag & drop) هم مسیر دیگری برای چسباندن است
+    ["drop", "dragover"].forEach((evt) => {
+      document.addEventListener(evt, (ev) => {
+        if (!isEditable(ev.target)) return;
+        ev.preventDefault();
+        if (evt === "drop") {
+          report("paste", "drop");
+          blockedNotice("چسباندن متن");
+        }
+      }, true);
+    });
+    // انتخاب و انتقال متن با ماوس هم غیرفعال می‌شود (پاسخ‌ها هنوز قابل تایپ‌اند)
+    document.addEventListener("contextmenu", (ev) => {
+      if (!isEditable(ev.target)) ev.preventDefault();
+    });
+  }
+
+  // ------------------------------- شمارندهٔ کاراکتر
+  function charCounter(el) {
+    if (!el || !el.dataset || !el.dataset.qid) return null;
+    const box = el.closest(".qpanel");
+    if (!box) return null;
+    let counter = box.querySelector(`.charcount[data-for="${el.dataset.qid}"]`);
+    if (!counter) {
+      counter = document.createElement("div");
+      counter.className = "charcount";
+      counter.dataset.for = el.dataset.qid;
+      const head = box.querySelector(".qhead");
+      if (head) head.appendChild(counter);
+      else box.appendChild(counter);
+    }
+    return counter;
+  }
+
+  function textOfQuestion(qid) {
+    const box = document.querySelector(`.qpanel[data-qid="${qid}"]`);
+    if (!box) return "";
+    return Array.from(box.querySelectorAll('textarea, input[type="text"]'))
+      .map((el) => (el.value || "").trim()).filter(Boolean).join(" ");
+  }
+
+  const MIN_QIDS = S.minCharQids || [];
+
+  function refreshCounter(qid) {
+    if (MIN_QIDS.indexOf(qid) === -1) return;
+    const box = document.querySelector(`.qpanel[data-qid="${qid}"]`);
+    if (!box) return;
+    const counter = charCounter(hasText);
+    if (!counter) return;
+    const len = textOfQuestion(qid).length;
+    const ok = len >= MIN_CHARS;
+    counter.textContent = `${fa(len)} / ${fa(MIN_CHARS)} کاراکتر`;
+    counter.classList.toggle("ok", ok);
+    counter.classList.toggle("short", !ok && len > 0);
+  }
+
+  function shortQuestions() {
+    return MIN_QIDS.filter((qid) => {
+      const box = document.querySelector(`.qpanel[data-qid="${qid}"]`);
+      if (!box) return false;
+      return textOfQuestion(qid).length < MIN_CHARS;
+    });
+  }
+
   // ------------------------------- saving
   async function save(qid) {
     if (submitted) return;
@@ -215,6 +317,17 @@
     // ارسال
     const modal = document.getElementById("modalBack");
     document.getElementById("submitBtn").addEventListener("click", () => {
+      const tooShort = shortQuestions();
+      if (tooShort.length) {
+        document.getElementById("modalText").innerHTML =
+          `<b>${fa(tooShort.length)} سوال کمتر از ${fa(MIN_CHARS)} کاراکتر دارند:</b> ` +
+          tooShort.map((x) => `<span dir="ltr">${x}</span>`).join("، ") +
+          `<br><br>تا وقتی هر پاسخ تشریحی به ${fa(MIN_CHARS)} کاراکتر نرسد، ارسال ممکن نیست.`;
+        modal.classList.add("show");
+        document.getElementById("modalConfirm").style.display = "none";
+        return;
+      }
+      document.getElementById("modalConfirm").style.display = "";
       const empty = S.qids.filter((qid) => {
         const d = answers[qid] || {};
         return !Object.keys(d).some((k) => {
@@ -233,16 +346,59 @@
     });
     document.getElementById("modalCancel").addEventListener("click", () => modal.classList.remove("show"));
     document.getElementById("modalConfirm").addEventListener("click", async () => {
+      try {
+        const res = await fetch("/api/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.error === "short_answers") {
+            modal.classList.remove("show");
+            flash(`هر پاسخ تشریحی باید حداقل ${fa(MIN_CHARS)} کاراکتر باشد.`);
+            return;
+          }
+        }
+      } catch (err) { /* خطای شبکه؛ سرور با مهلت خودش ارسال می‌کند */ }
       submitted = true;
       try { localStorage.removeItem("vazheban_draft"); } catch (e) {}
-      try {
-        await fetch("/api/submit", { method: "POST" });
-      } catch (err) { /* خطای شبکه؛ سرور با مهلت خودش ارسال می‌کند */ }
       window.location.href = "/exam";
     });
 
     window.addEventListener("beforeunload", (ev) => {
       if (!submitted) { ev.preventDefault(); ev.returnValue = ""; }
+    });
+
+    // شمارندهٔ کاراکتر هنگام تایپ
+    document.addEventListener("input", (ev) => {
+      const el = ev.target;
+      if (el && el.dataset && el.dataset.qid) refreshCounter(el.dataset.qid);
+    });
+
+    // ثبت خروج از صفحهٔ آزمون
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && !submitted) report("blur", "hidden");
+    });
+    window.addEventListener("blur", () => { if (!submitted) report("blur", "window"); });
+
+    // تلاش برای اسکرین‌شات (فقط در مرورگرهایی که پشتیبانی می‌کنند)
+    if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+      const orig = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getDisplayMedia = function (...args) {
+        report("screenshot", "getDisplayMedia");
+        return Promise.reject(new Error("screen capture disabled"));
+      };
+      void orig;
+    }
+    document.addEventListener("keyup", (ev) => {
+      const key = (ev.key || "").toLowerCase();
+      const printScreen = key === "printscreen" || ev.code === "PrintScreen";
+      const macShot = ev.metaKey && ev.shiftKey && ["3", "4", "5"].includes(key);
+      if (printScreen || macShot) {
+        report("screenshot", printScreen ? "printscreen" : "mac");
+        flash("گرفتن تصویر از صفحه در این آزمون مجاز نیست.");
+      }
     });
 
     // دوره‌ای: همهٔ پاسخ‌های محلی را بفرست
@@ -311,8 +467,10 @@
     try { localStorage.setItem("vazheban_draft", JSON.stringify(answers)); } catch (e) {}
   }, 1000));
 
+  wireClipboard();
   restore();
   wire();
+  MIN_QIDS.forEach(refreshCounter);
   if (restoredDraft) {
     flash("پاسخ‌های ذخیره‌نشدهٔ قبلی بازیابی شد و دوباره ذخیره می‌شود.");
     setTimeout(() => { S.qids.forEach((qid) => save(qid)); }, 1200);

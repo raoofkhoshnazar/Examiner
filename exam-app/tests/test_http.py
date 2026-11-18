@@ -63,7 +63,7 @@ class TestHTTP(unittest.TestCase):
         env = dict(os.environ, VAZHEBAN_DB=DB_PATH, PORT=str(cls.port))
         env["PYTHONPATH"] = APP_DIR
         # ساخت کاربران آزمایشی
-        subprocess.run([sys.executable, "manage.py", "create-users", "--participants", "2",
+        subprocess.run([sys.executable, "manage.py", "create-users", "--participants", "3",
                         "--grader", "t_grader", "--grader-password", "graderpass"],
                        cwd=APP_DIR, env=env, check=True, capture_output=True)
         cls.env = env
@@ -117,19 +117,23 @@ class TestHTTP(unittest.TestCase):
             "A4": {"choice": "ج"}, "A5": {"choice": "ب"}, "A6": {"choice": "الف"},
             "A7": {"choice": "ج"}, "A8": {"choice": "ب"},
             "B1": {"choices": ["الف", "ب", "د", "ه"]},
-            "C1": {"tf": False, "explain": "سود شرکت به پوشش هزینهٔ ثابت بستگی دارد."},
-            "C2": {"tf": True, "explain": "ماندگاری دو برابر می‌شود."},
-            "C3": {"tf": False, "explain": "TAM اندازهٔ فرصت است نه سودآوری."},
+            "C1": {"tf": False, "explain": "سود شرکت به پوشش هزینهٔ ثابت بستگی دارد و حاشیهٔ سود به‌تنهایی کافی نیست."},
+            "C2": {"tf": True, "explain": "ماندگاری دو برابر می‌شود و ارزش عمر مشتری هم به همان نسبت بالا می‌رود."},
+            "C3": {"tf": False, "explain": "TAM اندازهٔ فرصت بازار است نه سودآوری واقعی شرکت در کوتاه‌مدت."},
             "D1": {"choice": "ب"}, "D2": {"choice": "د"}, "D3": {"choice": "الف"},
             "D4": {"choice": "ه"}, "D5": {"choice": "ج"},
-            "E1": {"cac": "۳٬۰۰۰٬۰۰۰", "work": "۶۰۰٫۰۰۰٫۰۰۰ ÷ ۲۰۰"},
-            "E2": {"ltv_a": "۲۱۰۰۰۰۰۰", "ltv_c": "۲۸۳۵۰۰۰", "conclusion": "1"},
-            "F1": {"text": "مسئله عینی است، درد احساسی."},
-            "F2": {"text": "رقیب مشابه، جایگزین متفاوت."},
+            "E1": {"cac": "۳٬۰۰۰٬۰۰۰", "work": "۶۰۰ میلیون تومان هزینهٔ بازاریابی تقسیم بر ۲۰۰ مشتری جدید = ۳ میلیون تومان"},
+            "E2": {"ltv_a": "۲۱۰۰۰۰۰۰", "ltv_c": "۲۸۳۵۰۰۰", "conclusion": "1",
+                   "work": "حاشیهٔ سود ۰.۷ ضرب در میانگین ماندگاری ماه برای دو سگمنت محاسبه شد"},
+            "F1": {"text": "مسئلهٔ سگمنت C عینی و قابل اندازه‌گیری است اما درد اصلی احساسی و تجربی است "
+                          "و با داده‌های فعلی کیس نمی‌توان اندازه‌اش گرفت."},
+            "F2": {"text": "زبان‌لند رقیب مستقیم نیست بلکه جایگزین ارزان‌تر است و باید با تمایز تجربه "
+                          "و نتیجهٔ یادگیری پاسخ داده شود نه با کاهش قیمت."},
             "G1": {"feature": "قابلیت ۲", "segment": "کاهش C", "price": "نه", "metric": "ریزش زیر ۶٪"},
             "H1": {"situation": "دانشجو", "trigger": "ددلاین", "barriers": "ساعت و شهریه",
                    "success": "پیشرفت رایتینگ", "quote": "ساعت ۱۹ با شیفتم نمی‌خوره"},
-            "I1": {"claims": ["2", "4"], "notes": "ترکیبی و TAM"},
+            "I1": {"claims": ["2", "4"],
+                   "notes": "خطای ترکیبی و بزرگ‌نمایی TAM در استدلال دیده می‌شود؛ باید ادعا با دادهٔ کیس سنجیده شود."},
             "J1": {"segments": "A، B، C", "value": "نمره در زمان کمتر", "channels": "پرفورمنس",
                    "relation": "پشتیبانی چت", "revenue": "اشتراک ماهانه", "resources": "مدرسان",
                    "activities": "کلاس زنده", "partners": "دانشگاه", "costs": "دستمزد مدرس"},
@@ -280,6 +284,68 @@ class TestHTTP(unittest.TestCase):
         self.assertIn('<option value="sup01">sup01</option>', html)
         self.assertNotIn('size="6"', html)                      # فهرست بسته است، پس از انتخاب باز می‌شود
 
+    def test_09_short_answers_block_submit(self):
+        """پاسخ تشریحی کمتر از ۵۰ کاراکتر مانع ارسال است."""
+        c = self.login("sup03", self._password("sup03"))
+        c.post("/exam/start")
+        c.post("/api/answer", raw=json.dumps({"qid": "A1", "payload": {"choice": "ب"}}).encode())
+        c.post("/api/answer", raw=json.dumps({"qid": "F1", "payload": {"text": "کوتاه"}}).encode())
+        c.post("/api/event", raw=json.dumps({"kind": "paste", "detail": "F1"}).encode())
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            c.post("/api/submit", raw=b"{}")
+        self.assertEqual(ctx.exception.code, 400)
+        body = json.loads(ctx.exception.read().decode())
+        self.assertEqual(body["error"], "short_answers")
+        self.assertIn("F1", [x["id"] for x in body["short"]])
+        # با پاسخ بلند، ارسال انجام می‌شود
+        long_text = "این پاسخ نمونه دربارهٔ مسئلهٔ اصلی کیس و دلیل آن نوشته شده است تا حداقل کاراکتر رعایت شود."
+        for qid, field in (("C1", "explain"), ("C2", "explain"), ("C3", "explain"),
+                           ("F1", "text"), ("F2", "text")):
+            payload = {field: long_text}
+            if qid.startswith("C"):
+                payload["tf"] = True
+            c.post("/api/answer", raw=json.dumps({"qid": qid, "payload": payload}).encode())
+        c.post("/api/answer", raw=json.dumps(
+            {"qid": "I1", "payload": {"claims": ["2", "4"], "notes": long_text}}).encode())
+        c.post("/api/submit", raw=b"{}")
+        status, html = c.get_text("/exam")
+        self.assertEqual(status, 200)
+        self.assertIn("نتیجهٔ آزمون", html)
+
+    def test_10_single_device_session(self):
+        """ورود از دستگاه دوم، نشست دستگاه اول را می‌بندد."""
+        first = self.login("sup03", self._password("sup03"))
+        self.login("sup03", self._password("sup03"))
+        status, html = first.get_text("/login")
+        self.assertEqual(status, 200)
+        # نشست اول باطل شده: درخواست به /exam به صفحهٔ ورود هدایت می‌شود
+        with first.get("/exam") as r:
+            final = r.read().decode("utf-8")
+            final_url = r.url
+        self.assertIn("/login", final_url)
+        self.assertIn("خوش آمدید", final)
+
+    def test_11_grader_sees_health_report(self):
+        g = self.login("t_grader", "graderpass")
+        status, html = g.get_text("/grader")
+        self.assertEqual(status, 200)
+        self.assertIn("تشابه", html)
+        self.assertIn("سلامت", html)
+        import re
+        aid = re.search(r"/grader/attempt/(\d+)", html).group(1)
+        status, page = g.get_text(f"/grader/attempt/{aid}")
+        self.assertEqual(status, 200)
+        self.assertIn("گزارش سلامت آزمون", page)
+        self.assertIn("زمان‌سنجی هر سوال", page)
+        self.assertIn("تشابه پاسخ‌ها", page)
+        self.assertIn("تلاش چسباندن", page)
+        self.assertIn("پاسخ مرجع نمونه", page)      # کلید فقط برای مصحح
+        # شرکت‌کننده هیچ کلیدی نمی‌بیند
+        c = self.login("sup03", self._password("sup03"))
+        _, own = c.get_text("/exam")
+        self.assertNotIn("پاسخ مرجع نمونه", own)
+        self.assertNotIn("کلید:", own)
+
     @staticmethod
     def _password(username):
         # رمزها هنگام ساخت کاربران به تصادف تولید می‌شوند؛ در setUpClass نگه داشته می‌شوند
@@ -288,7 +354,7 @@ class TestHTTP(unittest.TestCase):
 
 def main():
     env = dict(os.environ, VAZHEBAN_DB=DB_PATH)
-    out = subprocess.run([sys.executable, "manage.py", "create-users", "--participants", "2",
+    out = subprocess.run([sys.executable, "manage.py", "create-users", "--participants", "3",
                           "--grader", "t_grader", "--grader-password", "graderpass"],
                          cwd=APP_DIR, env=env, check=True, capture_output=True, text=True).stdout
     passwords = {}
