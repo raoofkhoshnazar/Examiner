@@ -338,3 +338,11 @@ details.model > div { background: #fff; border-radius: 7px; padding: .5rem .7rem
   .rubric-row { grid-template-columns: 1fr 76px; }
   .rubric-select { width: 76px; }
 }
+
+/* ---------------- admin */
+.stack-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .6rem; align-items: end; margin-bottom: 1rem; }
+.stack-form label { margin: 0; }
+.stack-form label > span { font-size: .8rem; color: var(--muted); display: block; margin-bottom: .2rem; }
+.stack-form .btn { height: 42px; }
+form.inline { display: flex; gap: .35rem; align-items: center; flex-wrap: wrap; margin: .2rem 0; }
+form.inline input[type=text] { width: auto; }

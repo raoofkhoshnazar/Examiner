@@ -90,13 +90,18 @@ def cookie_value(handler, name):
 def page(title, body, user=None, extra_head="", wide=False):
     nav = ""
     if user:
-        role = "مصحح" if user["role"] in ("grader", "admin") else "شرکت‌کننده"
+        role = "مدیر" if user["role"] == "admin" else ("مصحح" if user["role"] == "grader" else "شرکت‌کننده")
+        links = "<a href='/exam'>آزمون</a>"
+        if user["role"] in ("grader", "admin"):
+            links = "<a href='/grader'>پنل مصحح</a>"
+        if user["role"] == "admin":
+            links = "<a href='/admin'>مدیریت</a> <a href='/grader'>پنل مصحح</a>"
         nav = f"""
         <header class="topbar">
           <div class="brand">واژه‌بان<span>سامانهٔ آزمون</span></div>
           <div class="navlinks">
             <span class="who">{e(user['display_name'])} · {role}</span>
-            {"<a href='/grader'>پنل مصحح</a>" if user['role'] in ('grader','admin') else "<a href='/exam'>آزمون</a>"}
+            {links}
             <a href="/logout">خروج</a>
           </div>
         </header>"""
@@ -418,6 +423,75 @@ def render_grader(user, conn):
       </table>
     </div>"""
     return page("پنل مصحح — واژه‌بان", body, user, wide=True)
+
+
+def render_admin(user, conn, notice="", error=""):
+    rows = conn.execute(
+        "SELECT u.*, a.id AS attempt_id, a.submitted_at, a.total_score, a.started_at "
+        "FROM users u LEFT JOIN attempts a ON a.user_id = u.id ORDER BY u.role DESC, u.username").fetchall()
+    role_label = {"admin": "مدیر", "grader": "مصحح", "participant": "شرکت‌کننده"}
+    out = []
+    for r in rows:
+        if r["attempt_id"] is None:
+            state = '<span class="badge mid">بدون تلاش</span>'
+        elif r["submitted_at"]:
+            state = f'<span class="badge good">ارسال‌شده · {fmt(r["total_score"])}</span>'
+        else:
+            state = '<span class="badge low">در حال آزمون</span>'
+        reset_btn = ""
+        if r["role"] == "participant":
+            reset_btn = f"""
+              <form method="post" action="/admin/reset-attempt" class="inline"
+                    onsubmit="return confirm('همهٔ پاسخ‌های این کاربر پاک شود تا بتواند دوباره آزمون بدهد؟')">
+                <input type="hidden" name="user_id" value="{r['id']}">
+                <button class="btn small danger" type="submit">بازنشانی تلاش</button>
+              </form>"""
+        out.append(f"""<tr>
+          <td>{e(r['username'])}</td>
+          <td>{e(r['display_name'])}</td>
+          <td>{role_label.get(r['role'], r['role'])}</td>
+          <td>{state}</td>
+          <td>
+            <form method="post" action="/admin/reset-password" class="inline">
+              <input type="hidden" name="user_id" value="{r['id']}">
+              <input type="text" name="password" placeholder="رمز تازه" required minlength="3" style="max-width:130px">
+              <button class="btn small" type="submit">تغییر رمز</button>
+            </form>
+            {reset_btn}
+          </td>
+        </tr>""")
+
+    body = f"""
+    <div class="card wide-card">
+      <h1>مدیریت — سامانهٔ آزمون</h1>
+      {f'<div class="alert ok">{e(notice)}</div>' if notice else ''}
+      {f'<div class="alert error">{e(error)}</div>' if error else ''}
+
+      <div class="stat-grid">
+        <div class="stat"><b>{fa(len([r for r in rows if r['role']=='participant']))}</b><span>شرکت‌کننده</span></div>
+        <div class="stat"><b>{fa(len([r for r in rows if r['submitted_at']]))}</b><span>آزمون ارسال‌شده</span></div>
+        <div class="stat"><b>{fa(len([r for r in rows if r['role']=='grader']))}</b><span>مصحح</span></div>
+      </div>
+
+      <h2>ساخت شرکت‌کنندهٔ تازه</h2>
+      <form method="post" action="/admin/create-user" class="stack-form">
+        <label><span>نام کاربری</span><input name="username" required pattern="[A-Za-z0-9_.-]{{3,32}}"></label>
+        <label><span>نام نمایشی</span><input name="display_name" required></label>
+        <label><span>رمز عبور</span><input name="password" required minlength="3"></label>
+        <button class="btn primary" type="submit">ساخت کاربر</button>
+      </form>
+
+      <h2>کاربران</h2>
+      <table class="table">
+        <thead><tr><th>نام کاربری</th><th>نام نمایشی</th><th>نقش</th><th>وضعیت آزمون</th><th>عملیات</th></tr></thead>
+        <tbody>{''.join(out)}</tbody>
+      </table>
+      <div class="actions">
+        <a class="btn" href="/grader/export.csv">دانلود CSV نتایج</a>
+        <a class="btn" href="/grader/export-answers.csv">دانلود پاسخ‌های خام</a>
+      </div>
+    </div>"""
+    return page("مدیریت — واژه‌بان", body, user, wide=True)
 
 
 def render_grader_attempt(user, conn, attempt_id):
@@ -750,7 +824,8 @@ class Handler(BaseHTTPRequestHandler):
             if not user:
                 self.redirect("/login")
                 return
-            self.redirect("/grader" if user["role"] in ("grader", "admin") else "/exam")
+            self.redirect("/admin" if user["role"] == "admin"
+                          else ("/grader" if user["role"] == "grader" else "/exam"))
             return
         if path == "/health":
             self.send_json({"ok": True})
@@ -781,6 +856,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"active": False})
             else:
                 self.send_json({"active": True, "remaining": attempt["deadline"] - int(time.time())})
+            return
+
+        if path == "/admin" and user["role"] == "admin":
+            self.send_html(render_admin(user, conn))
             return
 
         if path == "/grader" and user["role"] in ("grader", "admin"):
@@ -826,14 +905,65 @@ class Handler(BaseHTTPRequestHandler):
             row = db.get_user_by_username(conn, username)
             if row and row["active"] and db.verify_password(password, row["password_hash"], row["salt"]):
                 token = db.create_session(conn, row["id"], days=2)
-                self.redirect("/grader" if row["role"] in ("grader", "admin") else "/exam",
-                              f"vb_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=172800")
+                home = "/admin" if row["role"] == "admin" else ("/grader" if row["role"] == "grader" else "/exam")
+                self.redirect(home, f"vb_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=172800")
             else:
                 self.send_html(render_login(error="نام کاربری یا رمز عبور نادرست است."), 401)
             return
 
         if not user:
             self.send_json({"error": "unauthenticated"}, 401)
+            return
+
+        if path == "/admin/create-user" and user["role"] == "admin":
+            form = parse_qs(self.read_body().decode("utf-8"))
+            username = (form.get("username") or [""])[0].strip()
+            name = (form.get("display_name") or [""])[0].strip()
+            pw = (form.get("password") or [""])[0]
+            if not re.match(r"^[A-Za-z0-9_.-]{3,32}$", username) or not name or len(pw) < 3:
+                self.send_html(render_admin(user, conn, error="اطلاعات ناقص یا نام کاربری نامعتبر است."), 400)
+                return
+            if db.get_user_by_username(conn, username):
+                self.send_html(render_admin(user, conn, error="این نام کاربری قبلاً وجود دارد."), 400)
+                return
+            db.create_user(conn, username, name, pw, "participant")
+            self.send_html(render_admin(user, conn, notice=f"کاربر «{username}» ساخته شد."))
+            return
+
+        if path == "/admin/reset-password" and user["role"] == "admin":
+            form = parse_qs(self.read_body().decode("utf-8"))
+            try:
+                uid = int((form.get("user_id") or ["0"])[0])
+            except ValueError:
+                uid = 0
+            pw = (form.get("password") or [""])[0]
+            target = db.get_user(conn, uid)
+            if not target or len(pw) < 3:
+                self.send_html(render_admin(user, conn, error="کاربر پیدا نشد یا رمز کوتاه است."), 400)
+                return
+            db.set_password(conn, uid, pw)
+            conn.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+            conn.commit()
+            self.send_html(render_admin(user, conn, notice=f"رمز «{target['username']}» تغییر کرد."))
+            return
+
+        if path == "/admin/reset-attempt" and user["role"] == "admin":
+            form = parse_qs(self.read_body().decode("utf-8"))
+            try:
+                uid = int((form.get("user_id") or ["0"])[0])
+            except ValueError:
+                uid = 0
+            target = db.get_user(conn, uid)
+            if not target or target["role"] != "participant":
+                self.send_html(render_admin(user, conn, error="فقط تلاش شرکت‌کننده قابل بازنشانی است."), 400)
+                return
+            old = conn.execute("SELECT id FROM attempts WHERE user_id=?", (uid,)).fetchone()
+            if old:
+                conn.execute("DELETE FROM answers WHERE attempt_id=?", (old["id"],))
+                conn.execute("DELETE FROM events WHERE attempt_id=?", (old["id"],))
+                conn.execute("DELETE FROM attempts WHERE id=?", (old["id"],))
+                conn.commit()
+            self.send_html(render_admin(user, conn, notice=f"تلاش «{target['username']}» پاک شد؛ می‌تواند دوباره آزمون بدهد."))
             return
 
         if path == "/exam/start":

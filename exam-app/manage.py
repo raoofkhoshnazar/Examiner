@@ -63,6 +63,28 @@ def cmd_reset_password(args):
     conn.close()
 
 
+def cmd_upsert_user(args):
+    """ساخت یا هم‌سان‌سازی کاربر با نام کاربری، نام نمایشی، رمز و نقش مشخص"""
+    if args.role not in ("participant", "grader", "admin"):
+        print("نقش باید participant، grader یا admin باشد", file=sys.stderr)
+        sys.exit(1)
+    db.init_db()
+    conn = db.connect()
+    row = db.get_user_by_username(conn, args.username)
+    name = args.name or args.username
+    if row:
+        db.set_password(conn, row["id"], args.password)
+        conn.execute("UPDATE users SET display_name=?, role=?, active=1 WHERE id=?",
+                     (name, args.role, row["id"]))
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+        conn.commit()
+        print(f"{args.username},{args.role},updated")
+    else:
+        db.create_user(conn, args.username, name, args.password, args.role)
+        print(f"{args.username},{args.role},created")
+    conn.close()
+
+
 def cmd_list(args):
     db.init_db()
     conn = db.connect()
@@ -101,6 +123,13 @@ def main():
     rp.add_argument("username")
     rp.add_argument("--password", default="")
     rp.set_defaults(func=cmd_reset_password)
+
+    up = sub.add_parser("upsert-user")
+    up.add_argument("username")
+    up.add_argument("--password", required=True)
+    up.add_argument("--name", default="")
+    up.add_argument("--role", default="participant")
+    up.set_defaults(func=cmd_upsert_user)
 
     ls = sub.add_parser("list")
     ls.set_defaults(func=cmd_list)

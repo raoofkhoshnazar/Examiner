@@ -10,6 +10,7 @@
 |---|---|
 | شرکت‌کننده (پشتیبان) | ورود با نام کاربری و رمز اختصاصی، دیدن کیس کنار سوال، پاسخ‌دهی، ارسال، دیدن کارنامه |
 | مصحح | دیدن همهٔ تلاش‌های ارسال‌شده، تصحیح بخش‌های باز با روبریک، دانلود CSV نتایج |
+| مدیر | پنل `/admin`: ساخت شرکت‌کننده، تغییر رمز، بازنشانی تلاش، دسترسی به پنل مصحح |
 
 ## اجرا
 
@@ -60,4 +61,11 @@ bash deploy/deploy.sh
 ssh root@46.34.163.254 'cd /opt/vazheban-exam && sudo -u www-data python3 manage.py create-users --participants 20 --prefix sup --grader momarres --grader-password "RAMZ-MOSAHHEH"'
 ```
 
-آدرس: `https://46-34-163-254.sslip.io:8444/`
+آدرس: `https://exam.46-34-163-254.sslip.io/` (گواهی Let's Encrypt روی ۴۴۳)
+
+ساخت/هم‌سان‌سازی کاربر:
+
+```bash
+python3 manage.py upsert-user admin --password 8843 --name "مدیر آزمون" --role admin
+python3 manage.py upsert-user poshitban --password 1234 --name "کارشناس پشتیبان" --role participant
+```
