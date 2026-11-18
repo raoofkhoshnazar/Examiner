@@ -146,7 +146,23 @@ def page(title, body, user=None, extra_head="", wide=False, variant="app"):
 page.current_path = ""
 
 
-def render_login(error="", notice=""):
+ROLE_ORDER = {"admin": 0, "grader": 1, "participant": 2}
+
+
+def login_usernames(conn):
+    """نام کاربری‌های فعال برای فهرست انتخاب صفحهٔ ورود"""
+    if conn is None:
+        return []
+    rows = conn.execute("SELECT username, role FROM users WHERE active=1").fetchall()
+    pairs = [(r["username"], r["role"]) for r in rows]
+    pairs.sort(key=lambda x: (ROLE_ORDER.get(x[1], 9), x[0].lower()))
+    return [u for u, _ in pairs]
+
+
+def render_login(conn=None, error="", notice=""):
+    usernames = login_usernames(conn)
+    options = "".join(f'<option value="{e(u)}">{e(u)}</option>' for u in usernames)
+    rows = max(4, min(6, len(usernames) + 1))
     body = f"""
     <header class="auth-header">
       {wordmark()}
@@ -161,7 +177,7 @@ def render_login(error="", notice=""):
         <div class="exam-facts">
           <div class="fact"><b>۱۰۰</b><span>نمره</span></div>
           <div class="fact"><b>۲۵</b><span>سؤال</span></div>
-          <div class="fact"><b>۴۵</b><span>دقیقه</span></div>
+          <div class="fact"><b>{fa(EXAM["duration_minutes"])}</b><span>دقیقه</span></div>
         </div>
         <p class="auth-note">«در کیس نیست» هم یک پاسخ آگاهانه است؛<br>داده‌ها را ببینید، استدلال کنید و تصمیم ب...</p>
         <span class="auth-kicker">EXAMINER <span class="sep">/</span> VAZHEBAN</span>
@@ -175,7 +191,11 @@ def render_login(error="", notice=""):
         <form method="post" action="/login" class="login-form">
           <label class="field">
             <span class="field-label">نام کاربری</span>
-            <input name="username" placeholder="نام کاربری خود را وارد کنید" autocomplete="username" required autofocus>
+            <select name="username" class="field-select username-list" size="{rows}" required autofocus>
+              <option value="" disabled selected>— نام کاربری خود را از فهرست انتخاب کنید —</option>
+              {options}
+            </select>
+            <span class="field-help">با اسکرول بین نام‌ها، نام کاربری خودتان را انتخاب کنید.</span>
           </label>
           <label class="field">
             <span class="field-label">رمز عبور</span>
@@ -203,7 +223,7 @@ def render_intro(user):
       <div>
         <span class="eyebrow">مؤسسهٔ سرخ · ارزیابی حرفه‌ای</span>
         <h1 class="page-title">{e(EXAM['title'])}</h1>
-        <p class="page-sub">یک کیس واقعی، ۲۵ سوال، ۴۵ دقیقه. پیش از شروع این صفحه را تا انتها بخوانید.</p>
+        <p class="page-sub">یک کیس واقعی، ۲۵ سوال، {fa(EXAM["duration_minutes"])} دقیقه. پیش از شروع این صفحه را تا انتها بخوانید.</p>
       </div>
       <span class="version-chip">نسخهٔ {fa(VERSION)}</span>
     </div>
@@ -233,7 +253,7 @@ def render_intro(user):
         <div class="fact-row">
           <div class="fact-card"><b>۱۰۰</b><span>نمره</span></div>
           <div class="fact-card"><b>۲۵</b><span>سؤال</span></div>
-          <div class="fact-card"><b>۴۵</b><span>دقیقه</span></div>
+          <div class="fact-card"><b>{fa(EXAM["duration_minutes"])}</b><span>دقیقه</span></div>
         </div>
         <div class="divider"></div>
         <h3 class="subhead">ساختار بخش‌ها</h3>
@@ -900,7 +920,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/login":
-            self.send_html(render_login())
+            self.send_html(render_login(conn))
             return
         if path == "/logout":
             token = cookie_value(self, "vb_session")
@@ -1005,7 +1025,7 @@ class Handler(BaseHTTPRequestHandler):
                 home = "/admin" if row["role"] == "admin" else ("/grader" if row["role"] == "grader" else "/exam")
                 self.redirect(home, f"vb_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=172800")
             else:
-                self.send_html(render_login(error="نام کاربری یا رمز عبور نادرست است."), 401)
+                self.send_html(render_login(conn, error="نام کاربری یا رمز عبور نادرست است."), 401)
             return
 
         if not user:

@@ -5,3 +5,4 @@ exam-app/data/
 *.db-wal
 *.db-shm
 exam-credentials.txt
+exam-users.tsv

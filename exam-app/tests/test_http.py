@@ -213,8 +213,8 @@ class TestHTTP(unittest.TestCase):
         with c.get("/exam/time") as r:
             data = json.loads(r.read().decode())
         self.assertTrue(data["active"])
-        self.assertLessEqual(data["remaining"], 45 * 60)
-        self.assertGreater(data["remaining"], 44 * 60)
+        self.assertLessEqual(data["remaining"], 60 * 60)
+        self.assertGreater(data["remaining"], 59 * 60)
 
     def test_05_persian_and_latin_numbers(self):
         c = self.login("sup02", self._password("sup02"))

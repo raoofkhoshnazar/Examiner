@@ -85,6 +85,59 @@ def cmd_upsert_user(args):
     conn.close()
 
 
+def cmd_import_users(args):
+    """پاک‌کردن شرکت‌کننده‌های قبلی و ساخت شرکت‌کننده‌ها از فایل TSV (نام کاربری و رمز)"""
+    db.init_db()
+    conn = db.connect()
+    users = []
+    with open(args.file, encoding="utf-8-sig") as f:
+        for line in f:
+            line = line.rstrip("\r\n")
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            username, password = parts[0].strip(), parts[1].strip()
+            if username.lower() in ("username", "user", "نام کاربری"):
+                continue
+            users.append((username, password))
+    if not users:
+        print("فایل هیچ کاربری نداشت", file=sys.stderr)
+        sys.exit(1)
+
+    if args.replace:
+        ids = [r["id"] for r in conn.execute("SELECT id FROM users WHERE role='participant'")]
+        for uid in ids:
+            for a in conn.execute("SELECT id FROM attempts WHERE user_id=?", (uid,)).fetchall():
+                conn.execute("DELETE FROM answers WHERE attempt_id=?", (a["id"],))
+                conn.execute("DELETE FROM events WHERE attempt_id=?", (a["id"],))
+            conn.execute("DELETE FROM attempts WHERE user_id=?", (uid,))
+            conn.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+            conn.execute("DELETE FROM users WHERE id=?", (uid,))
+        conn.commit()
+        print(f"# {len(ids)} شرکت‌کنندهٔ قبلی پاک شد", file=sys.stderr)
+
+    created = 0
+    for username, password in users:
+        row = db.get_user_by_username(conn, username)
+        if row:
+            db.set_password(conn, row["id"], password)
+            conn.execute("UPDATE users SET display_name=?, role='participant', active=1 WHERE id=?",
+                         (username, row["id"]))
+            conn.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+            conn.commit()
+            continue
+        db.create_user(conn, username, username, password, "participant")
+        created += 1
+
+    print("username,password,role")
+    for username, password in users:
+        print(f"{username},{password},participant")
+    print(f"# {created} کاربر تازه ساخته شد، {len(users)} کاربر در فایل", file=sys.stderr)
+    conn.close()
+
+
 def cmd_list(args):
     db.init_db()
     conn = db.connect()
@@ -130,6 +183,11 @@ def main():
     up.add_argument("--name", default="")
     up.add_argument("--role", default="participant")
     up.set_defaults(func=cmd_upsert_user)
+
+    iu = sub.add_parser("import-users")
+    iu.add_argument("--file", required=True)
+    iu.add_argument("--replace", action="store_true")
+    iu.set_defaults(func=cmd_import_users)
 
     ls = sub.add_parser("list")
     ls.set_defaults(func=cmd_list)

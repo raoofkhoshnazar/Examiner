@@ -24,6 +24,17 @@ python3 manage.py reset-password sup03
 python3 manage.py export --out results.csv
 ```
 
+فهرست رسمی پشتیبان‌ها (۵۷ نفر) از یک فایل TSV با ستون‌های `UserName` و `Password` ساخته می‌شود.
+`--replace` همهٔ شرکت‌کننده‌های قبلی و پاسخ‌هایشان را پاک می‌کند و فهرست تازه را می‌سازد
+(کاربران مدیر و مصحح دست‌نخورده می‌مانند):
+
+```bash
+python3 manage.py import-users --file ../exam-users.tsv --replace
+```
+
+مدت آزمون ۶۰ دقیقه است (`EXAM["duration_minutes"]` در `exam_data.py`) و همهٔ متن‌های
+راهنما و صفحهٔ ورود از همان مقدار خوانده می‌شوند.
+
 هیچ وابستگی خارجی لازم نیست؛ فقط پایتون ۳.۱۰ به بالا و SQLite.
 
 ## ساختار
