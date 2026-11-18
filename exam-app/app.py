@@ -87,24 +87,43 @@ def cookie_value(handler, name):
 
 
 # ------------------------------------------------------------------ pages
-def page(title, body, user=None, extra_head="", wide=False):
+def wordmark(size="lg"):
+    return f"""
+    <a class="wordmark {size}" href="/">
+      <span class="wordmark-text">واژه‌بان</span>
+      <span class="institution-mark" aria-hidden="true"></span>
+    </a>"""
+
+
+def page(title, body, user=None, extra_head="", wide=False, variant="app"):
+    """title: «عنوان — واژه‌بان»؛ مسیر فعال از page.current_path خوانده می‌شود."""
     nav = ""
     if user:
         role = "مدیر" if user["role"] == "admin" else ("مصحح" if user["role"] == "grader" else "شرکت‌کننده")
-        links = "<a href='/exam'>آزمون</a>"
-        if user["role"] in ("grader", "admin"):
-            links = "<a href='/grader'>پنل مصحح</a>"
-        if user["role"] == "admin":
-            links = "<a href='/admin'>مدیریت</a> <a href='/grader'>پنل مصحح</a>"
+        if user["role"] == "participant":
+            items = [("/exam", "آزمون"), ("/guide", "راهنمای آزمون")]
+        elif user["role"] == "grader":
+            items = [("/grader", "نتایج"), ("/exam", "کارنامه")]
+        else:
+            items = [("/admin", "مدیریت"), ("/grader", "نتایج")]
+        current = "/guide" if page.current_path == "/guide" else page.current_path
+        links = "".join(
+            f'<a class="navlink{" active" if href == current else ""}" href="{href}">{e(text)}</a>'
+            for href, text in items)
         nav = f"""
         <header class="topbar">
-          <div class="brand">واژه‌بان<span>سامانهٔ آزمون</span></div>
-          <div class="navlinks">
-            <span class="who">{e(user['display_name'])} · {role}</span>
-            {links}
-            <a href="/logout">خروج</a>
+          {wordmark()}
+          <nav class="navlinks">{links}</nav>
+          <div class="account">
+            <span class="who">{e(user['display_name'])} <span class="sep">/</span> {role}</span>
+            <a class="signout" href="/logout">خروج از حساب</a>
           </div>
         </header>"""
+    footer = """
+    <footer class="site-footer">
+      <span>آزمون کیس‌محور · نسخهٔ ۲.۰</span>
+      <span>سامانهٔ ارزیابی کارشناسان پشتیبانی · مؤسسهٔ سرخ</span>
+    </footer>"""
     return f"""<!doctype html>
 <html lang="fa" dir="rtl">
 <head>
@@ -114,55 +133,118 @@ def page(title, body, user=None, extra_head="", wide=False):
 <link rel="stylesheet" href="/static/style.css">
 {extra_head}
 </head>
-<body class="{'wide' if wide else ''}">
+<body class="{'wide' if wide else ''} {variant}">
 {nav}
 <main>
 {body}
 </main>
+{'' if variant == 'auth' else footer}
 </body>
 </html>"""
 
 
+page.current_path = ""
+
+
 def render_login(error="", notice=""):
     body = f"""
-    <div class="login-card">
-      <h1>آزمون مبانی کسب‌وکار</h1>
-      <p class="muted">مؤسسهٔ سرخ — کیس «واژه‌بان» · نسخهٔ {fa(VERSION)}</p>
-      {f'<div class="alert error">{e(error)}</div>' if error else ''}
-      {f'<div class="alert ok">{e(notice)}</div>' if notice else ''}
-      <form method="post" action="/login">
-        <label>نام کاربری
-          <input name="username" autocomplete="username" required autofocus>
-        </label>
-        <label>رمز عبور
-          <input name="password" type="password" autocomplete="current-password" required>
-        </label>
-        <button class="btn primary" type="submit">ورود</button>
-      </form>
-      <p class="muted small">نام کاربری و رمز اختصاصی خود را از مسئول آزمون دریافت کرده‌اید.</p>
-    </div>"""
-    return page("ورود — آزمون واژه‌بان", body)
+    <header class="auth-header">
+      {wordmark()}
+      <span class="version-tag">نسخهٔ {fa(VERSION)}</span>
+    </header>
+    <main class="auth-main">
+      <section class="auth-editorial">
+        <span class="institution-badge">مؤسسهٔ سرخ <span class="sep">/</span> ارزیابی حرفه‌ای</span>
+        <h1 class="auth-hero">دانشت را به<br>تصمیم تبدیل کن.</h1>
+        <p class="auth-lede">آزمون کیس‌محور مبانی کسب‌وکار<br>یک مسئلهٔ واقعی؛ فرصتی برای نشان دادن نگاه تحلیلی...</p>
+        <div class="auth-divider"></div>
+        <div class="exam-facts">
+          <div class="fact"><b>۱۰۰</b><span>نمره</span></div>
+          <div class="fact"><b>۲۵</b><span>سؤال</span></div>
+          <div class="fact"><b>۴۵</b><span>دقیقه</span></div>
+        </div>
+        <p class="auth-note">«در کیس نیست» هم یک پاسخ آگاهانه است؛<br>داده‌ها را ببینید، استدلال کنید و تصمیم ب...</p>
+        <span class="auth-kicker">EXAMINER <span class="sep">/</span> VAZHEBAN</span>
+      </section>
+
+      <section class="auth-form">
+        <h2 class="auth-title">خوش آمدید</h2>
+        <p class="auth-sub">برای ورود به آزمون، اطلاعات حساب اختصاصی خود را وارد کنید.</p>
+        {f'<div class="alert error">{e(error)}</div>' if error else ''}
+        {f'<div class="alert ok">{e(notice)}</div>' if notice else ''}
+        <form method="post" action="/login" class="login-form">
+          <label class="field">
+            <span class="field-label">نام کاربری</span>
+            <input name="username" placeholder="نام کاربری خود را وارد کنید" autocomplete="username" required autofocus>
+          </label>
+          <label class="field">
+            <span class="field-label">رمز عبور</span>
+            <input name="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
+          </label>
+          <button class="btn-login" type="submit">ورود به سامانه ←</button>
+        </form>
+        <div class="auth-hint">
+          <b>حساب کاربری ندارید؟</b>
+          <span>نام کاربری و رمز اختصاصی را از مسئول آزمون مؤسسه دریافت کنید.</span>
+        </div>
+        <p class="auth-foot">ورود به‌معنای آمادگی برای شروع آزمون نیست؛<br>پیش از شروع، راهنما را خواهید دید.</p>
+      </section>
+    </main>
+    <footer class="auth-footer">
+      <span>نسخهٔ {fa(VERSION)}</span>
+      <span>مؤسسهٔ سرخ</span>
+    </footer>"""
+    return page("ورود — آزمون واژه‌بان", body, variant="auth")
 
 
 def render_intro(user):
-    return page("آزمون واژه‌بان", f"""
-    <div class="card">
-      <h1>{e(EXAM['title'])}</h1>
-      <div class="meta-grid">
-        <div><b>مدت آزمون</b><span>{fa(45)} دقیقه</span></div>
-        <div><b>تعداد سوال</b><span>{fa(25)} سوال در {fa(10)} بخش</span></div>
-        <div><b>مجموع بارم</b><span>{fa(100)}</span></div>
-        <div><b>نمرهٔ منفی</b><span>ندارد</span></div>
+    return page("راهنمای آزمون — واژه‌بان", f"""
+    <div class="page-head">
+      <div>
+        <span class="eyebrow">مؤسسهٔ سرخ · ارزیابی حرفه‌ای</span>
+        <h1 class="page-title">{e(EXAM['title'])}</h1>
+        <p class="page-sub">یک کیس واقعی، ۲۵ سوال، ۴۵ دقیقه. پیش از شروع این صفحه را تا انتها بخوانید.</p>
       </div>
-      <div class="intro-text">{EXAM['intro']}</div>
-      <div class="notice">
-        <b>مهم:</b> تایمر از لحظهٔ شروع روی سرور اجرا می‌شود و با بستن مرورگر متوقف نمی‌شود.
-        پاسخ‌ها هنگام نوشتن ذخیره می‌شوند. پس از پایان زمان، پاسخ‌ها به‌صورت خودکار ارسال می‌شوند.
-        شما فقط یک بار می‌توانید آزمون بدهید.
-      </div>
-      <form method="post" action="/exam/start">
-        <button class="btn primary big" type="submit">شروع آزمون</button>
-      </form>
+      <span class="version-chip">نسخهٔ {fa(VERSION)}</span>
+    </div>
+
+    <div class="guide-grid">
+      <section class="panel guide-main">
+        <h2 class="panel-title">راهنمای شرکت در آزمون</h2>
+        <div class="intro-text">{EXAM['intro']}</div>
+        <h3 class="subhead">چک‌لیست پیش از شروع</h3>
+        <ul class="checklist">
+          <li>کیس «واژه‌بان» در تمام مدت آزمون کنار سوال‌ها قابل مشاهده است؛ لازم نیست جایی بروید.</li>
+          <li>تایمر از لحظهٔ شروع روی سرور اجرا می‌شود و با بستن مرورگر متوقف نمی‌شود.</li>
+          <li>پاسخ‌ها هنگام نوشتن ذخیره می‌شوند؛ اگر اتصال قطع شد، به همان نقطه برمی‌گردید.</li>
+          <li>پس از پایان زمان، پاسخ‌ها خودکار ارسال می‌شوند. شما فقط یک بار می‌توانید آزمون بدهید.</li>
+          <li>بخش‌های تشریحی پس از آزمون با روبریک تصحیح می‌شوند؛ نمرهٔ نهایی پس از آن اعلام می‌شود.</li>
+        </ul>
+        <div class="notice">
+          <b>شرط قبولی:</b> ۶۵ از ۱۰۰ و حداقل ۶ از ۱۰ در بخش محاسبهٔ ساده.
+          نمرهٔ منفی وجود ندارد؛ هیچ سوالی را خالی نگذارید.
+        </div>
+        <form method="post" action="/exam/start" class="guide-cta">
+          <button class="btn primary big" type="submit">شروع آزمون ←</button>
+        </form>
+      </section>
+
+      <aside class="panel guide-side">
+        <div class="fact-row">
+          <div class="fact-card"><b>۱۰۰</b><span>نمره</span></div>
+          <div class="fact-card"><b>۲۵</b><span>سؤال</span></div>
+          <div class="fact-card"><b>۴۵</b><span>دقیقه</span></div>
+        </div>
+        <div class="divider"></div>
+        <h3 class="subhead">ساختار بخش‌ها</h3>
+        <table class="mini-table">
+          <thead><tr><th>بخش</th><th>نوع</th><th>بارم</th></tr></thead>
+          <tbody>
+          {''.join(f'<tr><td>{e(s["id"])}</td><td>{e(s["title"])}</td><td>{fa(s["points"])}</td></tr>' for s in SECTIONS)}
+          </tbody>
+        </table>
+        <p class="muted small">بارم دستی با روبریک مصحح محاسبه می‌شود.</p>
+      </aside>
     </div>""", user)
 
 
@@ -798,13 +880,19 @@ class Handler(BaseHTTPRequestHandler):
     def route_get(self, conn):
         path = urlparse(self.path).path
         user = self.current_user(conn)
+        page.current_path = path
 
         if path.startswith("/static/"):
-            name = os.path.basename(path)
-            fp = os.path.join(STATIC, name)
+            rel = path[len("/static/"):]
+            name = os.path.basename(rel)
+            fp = os.path.join(STATIC, rel) if "/" in rel else os.path.join(STATIC, name)
+            if not os.path.abspath(fp).startswith(os.path.abspath(STATIC)):
+                fp = ""
             if os.path.isfile(fp):
                 ext = name.rsplit(".", 1)[-1]
-                ctype = {"css": "text/css; charset=utf-8", "js": "application/javascript; charset=utf-8"}.get(ext, "application/octet-stream")
+                ctype = {"css": "text/css; charset=utf-8",
+                         "js": "application/javascript; charset=utf-8",
+                         "woff2": "font/woff2"}.get(ext, "application/octet-stream")
                 with open(fp, "rb") as f:
                     self.send_file(f.read(), ctype)
             else:
@@ -835,6 +923,14 @@ class Handler(BaseHTTPRequestHandler):
             self.redirect("/login")
             return
 
+        if path == "/guide" and user["role"] == "participant":
+            attempt = conn.execute("SELECT * FROM attempts WHERE user_id=?", (user["id"],)).fetchone()
+            if attempt:
+                self.redirect("/exam")
+                return
+            self.send_html(render_intro(user))
+            return
+
         if path == "/exam":
             attempt = conn.execute("SELECT * FROM attempts WHERE user_id=?", (user["id"],)).fetchone()
             if attempt and attempt["submitted_at"]:
@@ -847,6 +943,7 @@ class Handler(BaseHTTPRequestHandler):
             answers = {}
             for r in conn.execute("SELECT * FROM answers WHERE attempt_id=?", (attempt["id"],)):
                 answers[r["qid"]] = json.loads(r["payload"])
+            page.current_path = "/exam"
             self.send_html(render_exam(user, attempt, answers))
             return
 
