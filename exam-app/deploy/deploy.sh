@@ -9,11 +9,10 @@ DATA_DIR="/var/lib/vazheban-exam"
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "→ ارسال فایل‌ها به $SERVER:$APP_DIR"
-ssh "$SERVER" "mkdir -p $APP_DIR/static $DATA_DIR && chown www-data:www-data $DATA_DIR"
-rsync -az --delete \
-  --exclude 'data/' --exclude '__pycache__/' --exclude '.git/' \
-  --exclude 'tests/' --exclude '*.pyc' \
-  "$SRC/" "$SERVER:$APP_DIR/"
+ssh "$SERVER" "mkdir -p $APP_DIR/static $DATA_DIR && chown www-data:www-data $DATA_DIR && rm -rf $APP_DIR/*.py $APP_DIR/static"
+tar -czf - --exclude='data' --exclude='__pycache__' --exclude='.git' \
+  --exclude='tests' --exclude='*.pyc' -C "$SRC" . \
+  | ssh "$SERVER" "tar -xzf - -C $APP_DIR"
 
 echo "→ نصب سرویس systemd"
 scp -q "$SRC/deploy/vazheban-exam.service" "$SERVER:/etc/systemd/system/vazheban-exam.service"

@@ -4,3 +4,4 @@ exam-app/data/
 *.db
 *.db-wal
 *.db-shm
+exam-credentials.txt

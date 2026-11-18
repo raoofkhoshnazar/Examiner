@@ -542,6 +542,15 @@ def render_grader_question(q, payload, row, attempt_id):
 
 
 # ------------------------------------------------------------------ CSV
+def _csv_num(n):
+    """عدد با ارقام لاتین برای بازشدن درست در اکسل"""
+    try:
+        n = round(float(n), 2)
+    except (TypeError, ValueError):
+        return ""
+    return str(int(n)) if abs(n - round(n)) < 1e-9 else f"{n:.2f}"
+
+
 def export_rows(conn):
     manual_qids = [q["id"] for q in QUESTIONS if q["manual"] > 0]
     ph = ",".join("?" * len(manual_qids))
@@ -563,11 +572,14 @@ def export_rows(conn):
                 continue
             if q["auto"]:
                 auto_by[q["section"]] = auto_by.get(q["section"], 0) + (r["auto_score"] or 0)
-                cells.append(f"{r['auto_score']}/{q['points']}" if not q["manual"] else
-                             f"{r['auto_score']}+{fmt(r['manual_score'] or 0)}/{q['points']}")
+                auto_part = _csv_num(r["auto_score"] or 0)
+                if q["manual"]:
+                    cells.append(f"{auto_part}+{_csv_num(r['manual_score'] or 0)}/{q['points']}")
+                else:
+                    cells.append(f"{auto_part}/{q['points']}")
             else:
                 manual_by[q["id"]] = r["manual_score"] or 0
-                cells.append(f"{fmt(r['manual_score']) if r['manual_score'] is not None else 'در انتظار'}/{q['points']}")
+                cells.append(f"{_csv_num(r['manual_score']) if r['manual_score'] is not None else 'در انتظار'}/{q['points']}")
         sec = grading.section_totals(auto_by, manual_by)
         rows.append([a["display_name"], a["username"],
                      time.strftime("%Y-%m-%d %H:%M", time.localtime(a["started_at"])),
