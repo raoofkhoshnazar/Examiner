@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import db
 import grading
 import integrity
+import reportcard
 from exam_data import (AUTO_POINTS, CASE_HTML, EXAM, MANUAL_POINTS, MODEL_ANSWERS, QUESTIONS,
                        QUESTIONS_BY_ID, SECTIONS, SECTION_POINTS, TOTAL_POINTS)
 
@@ -81,6 +82,23 @@ def order_for(seed, participant_name):
     return result
 
 
+def detect_device(handler):
+    """دستگاه تقریبی از روی User-Agent: موبایل / تبلت / لپ‌تاپ-دسکتاپ."""
+    ua = (handler.headers.get("User-Agent") or "").lower()
+    if not ua:
+        return "ناشناس"
+    if "ipad" in ua or "tablet" in ua or ("android" in ua and "mobile" not in ua):
+        return "تبلت"
+    if "iphone" in ua or "ipod" in ua or "windows phone" in ua or "mobile" in ua or "android" in ua:
+        return "گوشی"
+    return "لپ‌تاپ / دسکتاپ"
+
+
+def client_ip(handler):
+    fwd = handler.headers.get("X-Forwarded-For") or ""
+    return (fwd.split(",")[0].strip() if fwd else handler.client_address[0])[:60]
+
+
 def cookie_value(handler, name):
     raw = handler.headers.get("Cookie") or ""
     for part in raw.split(";"):
@@ -109,7 +127,7 @@ def page(title, body, user=None, extra_head="", wide=False, variant="app"):
         elif user["role"] == "grader":
             items = [("/grader", "نتایج"), ("/exam", "کارنامه")]
         else:
-            items = [("/admin", "مدیریت"), ("/grader", "نتایج")]
+            items = [("/admin", "مدیریت"), ("/admin/live", "وضعیت زنده"), ("/grader", "نتایج")]
         current = "/guide" if page.current_path == "/guide" else page.current_path
         links = "".join(
             f'<a class="navlink{" active" if href == current else ""}" href="{href}">{e(text)}</a>'
@@ -135,6 +153,8 @@ def page(title, body, user=None, extra_head="", wide=False, variant="app"):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(title)}</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<script src="/static/register-sw.js" defer></script>
 {extra_head}
 </head>
 <body class="{'wide' if wide else ''} {variant}">
@@ -148,6 +168,34 @@ def page(title, body, user=None, extra_head="", wide=False, variant="app"):
 
 
 page.current_path = ""
+
+
+def render_error(user, code=404, message=""):
+    """صفحهٔ خطای دوستانه، بدون نمایش جزئیات فنی."""
+    data = {
+        404: ("این صفحه پیدا نشد", "نشانی‌ای که باز کردید وجود ندارد یا جابه‌جا شده است.",
+              "همه‌چیز مرتب است؛ کافی است از دکمهٔ زیر برگردید."),
+        403: ("دسترسی به این صفحه ندارید", "این بخش برای نقش فعلی حساب شما باز نیست.",
+              "با حساب مناسب وارد شوید یا از مدیریت بخواهید دسترسی بدهد."),
+        500: ("مشکلی پیش آمد", "خطایی موقت رخ داد و درخواست شما کامل نشد.",
+              "لطفاً یک بار دیگر تلاش کنید؛ پاسخ‌های ذخیره‌شدهٔ آزمون دست‌نخورده‌اند."),
+    }.get(code, ("خطا", "درخواست شما انجام نشد.", "لطفاً دوباره تلاش کنید."))
+    title, sub, hint = data
+    home = "/admin" if user and user["role"] == "admin" else (
+        "/grader" if user and user["role"] == "grader" else ("/exam" if user else "/"))
+    body = f"""
+    <div class="errorpage">
+      <div class="error-code">{fa(code)}</div>
+      <h1>{e(title)}</h1>
+      <p class="error-sub">{e(sub)}</p>
+      {f'<p class="muted small">{e(message)}</p>' if message else ''}
+      <p class="muted">{e(hint)}</p>
+      <div class="actions center">
+        <a class="btn primary" href="{home}">{"بازگشت به آزمون" if user else "بازگشت به ورود"}</a>
+        <a class="btn" href="javascript:history.back()">صفحهٔ قبل</a>
+      </div>
+    </div>"""
+    return page(f"{title} — واژه‌بان", body, user, variant="auth" if not user else "app")
 
 
 ROLE_ORDER = {"admin": 0, "grader": 1, "participant": 2}
@@ -369,6 +417,9 @@ def auto_submit_expired(conn):
                      (now, r["id"]))
         conn.commit()
         db.log_event(conn, r["id"], "auto_submit", "زمان آزمون تمام شد")
+        owner = conn.execute("SELECT user_id FROM attempts WHERE id=?", (r["id"],)).fetchone()
+        if owner:
+            db.log_audit(conn, owner["user_id"], "exam_auto_submit", "ارسال خودکار پایان زمان")
         recompute_attempt(conn, r["id"])
     return len(rows)
 
@@ -514,6 +565,10 @@ def render_result(user, attempt, section_scores, manual_pending):
         <tbody>{''.join(rows)}</tbody>
       </table>
       <p class="muted small">معیار قبولی: {fa(65)} از {fa(100)} و حداقل {fa(6)} از {fa(10)} در بخش محاسبه.</p>
+      <div class="actions">
+        <a class="btn primary" href="/report/{attempt['id']}">مشاهدهٔ کارنامهٔ ارزیابی</a>
+        <a class="btn" href="/report/{attempt['id']}?download=1">دانلود کارنامه</a>
+      </div>
     </div>"""
     return page("نتیجه — واژه‌بان", body, user)
 
@@ -633,6 +688,150 @@ def render_grader(user, conn):
     return page("پنل مصحح — واژه‌بان", body, user, wide=True)
 
 
+LIVE_IDLE_SECONDS = 120     # بی‌فعالیتی بیشتر از این، «نیمه‌کاره خارج‌شده» شمرده می‌شود
+
+AUDIT_LABEL = {
+    "login": "ورود", "logout": "خروج", "login_failed": "ورود ناموفق",
+    "exam_start": "شروع آزمون", "exam_submit": "ارسال آزمون",
+    "exam_auto_submit": "ارسال خودکار", "admin_reset_password": "تغییر رمز",
+    "admin_reset_attempt": "بازنشانی تلاش", "admin_create_user": "ساخت کاربر",
+}
+AUDIT_TONE = {"login": "good", "logout": "mid", "login_failed": "low",
+              "exam_submit": "good", "exam_auto_submit": "mid"}
+
+
+def device_icon(device):
+    return {"گوشی": "📱", "تبلت": "📟", "لپ‌تاپ / دسکتاپ": "💻"}.get(device, "·")
+
+
+def live_snapshot(conn):
+    """عکس لحظه‌ای وضعیت آزمون: در حال آزمون، تمام‌کرده، منقضی، نیمه‌کاره."""
+    now = int(time.time())
+    rows = conn.execute(
+        "SELECT a.*, u.display_name, u.username FROM attempts a JOIN users u ON u.id=a.user_id "
+        "ORDER BY a.started_at DESC").fetchall()
+    snap = {"live": [], "done": [], "expired": [], "left": [], "now": now}
+    for a in rows:
+        answered = conn.execute("SELECT COUNT(*) AS c FROM answers WHERE attempt_id=?",
+                                (a["id"],)).fetchone()["c"]
+        last = a["last_seen"] or a["started_at"]
+        item = {
+            "name": a["display_name"], "username": a["username"],
+            "device": a["device"] or "ناشناس", "answered": answered,
+            "remaining": a["deadline"] - now, "idle": now - last,
+            "progress": round(answered / len(QUESTIONS) * 100),
+            "submitted": a["submitted_at"], "score": a["total_score"],
+        }
+        if a["submitted_at"]:
+            snap["expired" if a["status"] == "expired" else "done"].append(item)
+        elif item["idle"] > LIVE_IDLE_SECONDS:
+            snap["left"].append(item)
+        else:
+            snap["live"].append(item)
+    snap["audit"] = conn.execute(
+        "SELECT au.*, u.display_name, u.username FROM audit au LEFT JOIN users u ON u.id=au.user_id "
+        "ORDER BY au.id DESC LIMIT 60").fetchall()
+    return snap
+
+
+def _progress_cell(item):
+    return (f'<div class="miniprogress"><span style="width:{item["progress"]}%"></span></div>'
+            f'<span class="muted small">{fa(item["answered"])} / {fa(len(QUESTIONS))}'
+            f' · {fa(item["progress"])}٪</span>')
+
+
+def _person_cell(item):
+    return f'{e(item["name"])}<br><span class="muted small">{e(item["username"])}</span>'
+
+
+def _device_cell(item):
+    return f'{device_icon(item["device"])} {e(item["device"])}'
+
+
+def _live_table(items, empty_text):
+    if not items:
+        return f'<p class="muted">{empty_text}</p>'
+    rows = []
+    for it in items:
+        active = it["idle"] < 45
+        state = ('<span class="badge good">فعال</span>' if active else
+                 f'<span class="badge mid">بی‌فعالیت {fa(max(0, it["idle"]) // 60)} دقیقه</span>')
+        rows.append(
+            "<tr><td>" + _person_cell(it) + "</td>"
+            "<td>" + _device_cell(it) + "</td>"
+            "<td>" + _progress_cell(it) + "</td>"
+            f"<td>{fa_clock(max(0, it['remaining']))}</td><td>{state}</td></tr>")
+    head = ("<thead><tr><th>نام</th><th>دستگاه</th><th>پیشرفت</th>"
+            "<th>زمان باقی‌مانده</th><th>وضعیت</th></tr></thead>")
+    return f'<table class="table compact">{head}<tbody>{"".join(rows)}</tbody></table>'
+
+
+def _done_table(items, empty_text, label):
+    if not items:
+        return f'<p class="muted">{empty_text}</p>'
+    rows = "".join(
+        "<tr><td>" + _person_cell(it) + "</td>"
+        "<td>" + _device_cell(it) + "</td>"
+        f"<td>{time.strftime('%H:%M', time.localtime(it['submitted']))}</td>"
+        f"<td>{fmt(it['score'] or 0)}</td></tr>" for it in items)
+    head = f"<thead><tr><th>نام</th><th>دستگاه</th><th>{e(label)}</th><th>نمره</th></tr></thead>"
+    return f'<table class="table compact">{head}<tbody>{rows}</tbody></table>'
+
+
+def render_audit_rows(rows):
+    return "".join(
+        f"<tr><td>{time.strftime('%m-%d %H:%M', time.localtime(r['created_at']))}</td>"
+        f"<td>{e(r['display_name'] or r['username'] or '—')}</td>"
+        f"<td><span class=\"badge {AUDIT_TONE.get(r['action'], 'mid')}\">"
+        f"{e(AUDIT_LABEL.get(r['action'], r['action']))}</span></td>"
+        f"<td>{e(r['detail'] or '')}</td>"
+        f"<td>{device_icon(r['device'] or '')} {e(r['device'] or '—')}</td></tr>"
+        for r in rows)
+
+
+def render_live(user, conn):
+    snap = live_snapshot(conn)
+    now = snap["now"]
+    counts = [("در حال آزمون", len(snap["live"])), ("تمام‌کرده", len(snap["done"])),
+              ("منقضی", len(snap["expired"])), ("نیمه‌کاره خارج‌شده", len(snap["left"]))]
+    stats = "".join(f'<div class="stat"><b>{fa(n)}</b><span>{e(t)}</span></div>' for t, n in counts)
+    audit_rows = render_audit_rows(snap["audit"])
+    body = f"""
+    <div class="card wide-card">
+      <div class="livehead">
+        <div>
+          <h1>وضعیت زندهٔ آزمون</h1>
+          <p class="muted">آخرین به‌روزرسانی: {time.strftime('%H:%M:%S', time.localtime(now))} —
+          این صفحه هر ۲۰ ثانیه خودکار تازه می‌شود.</p>
+        </div>
+        <span class="livechip"><span class="recdot"></span> زنده</span>
+      </div>
+      <div class="stat-grid">{stats}</div>
+
+      <h2>در حال آزمون ({fa(len(snap['live']))})</h2>
+      {_live_table(snap['live'], 'در این لحظه کسی آزمون نمی‌دهد.')}
+
+      <h2>نیمه‌کاره خارج‌شده ({fa(len(snap['left']))})</h2>
+      <p class="muted small">بیش از دو دقیقه است هیچ فعالیتی از این افراد ثبت نشده؛ می‌توانند با همان حساب برگردند و تایمرشان ادامه دارد.</p>
+      {_live_table(snap['left'], 'همهٔ آزمون‌دهنده‌ها فعال‌اند.')}
+
+      <div class="twocol">
+        <div><h2>تمام‌کرده ({fa(len(snap['done']))})</h2>
+        {_done_table(snap['done'], 'هنوز کسی ارسال نکرده است.', 'ارسال')}</div>
+        <div><h2>منقضی ({fa(len(snap['expired']))})</h2>
+        {_done_table(snap['expired'], 'تلاش منقضی وجود ندارد.', 'ارسال خودکار')}</div>
+      </div>
+
+      <h2>لاگ ورودها و عملیات</h2>
+      <p class="muted small">۶۰ رخداد آخر: ورود، خروج، ورود ناموفق، شروع و ارسال آزمون و اقدام‌های مدیر.</p>
+      <table class="table compact"><thead><tr><th>زمان</th><th>کاربر</th><th>رخداد</th><th>جزئیات</th><th>دستگاه</th></tr></thead>
+      <tbody>{audit_rows or '<tr><td colspan="5" class="muted">هنوز رخدادی ثبت نشده است.</td></tr>'}</tbody></table>
+      <p class="muted small">لاگ به‌صورت چرخشی فقط ۵۰۰۰ رخداد آخر را نگه می‌دارد.</p>
+    </div>
+    <script>setTimeout(function(){{ location.reload(); }}, 20000);</script>"""
+    return page("وضعیت زنده — واژه‌بان", body, user, wide=True)
+
+
 def render_admin(user, conn, notice="", error=""):
     rows = conn.execute(
         "SELECT u.*, a.id AS attempt_id, a.submitted_at, a.total_score, a.started_at "
@@ -695,6 +894,7 @@ def render_admin(user, conn, notice="", error=""):
         <tbody>{''.join(out)}</tbody>
       </table>
       <div class="actions">
+        <a class="btn primary" href="/admin/live">وضعیت زندهٔ آزمون</a>
         <a class="btn" href="/grader/export.csv">دانلود CSV نتایج</a>
         <a class="btn" href="/grader/export-answers.csv">دانلود پاسخ‌های خام</a>
       </div>
@@ -731,6 +931,7 @@ def render_grader_attempt(user, conn, attempt_id):
         <div class="navactions">
           {"<a class='btn small' href='/grader/attempt/"+str(attempt_id)+"/prev'>قبلی</a>" if False else ""}
           <a class="btn small" href="/grader">بازگشت به فهرست</a>
+          <a class="btn small" href="/report/{attempt_id}?download=1">کارنامه</a>
           <a class="btn small" href="/grader/attempt/{attempt_id}/next">بعدی →</a>
         </div>
       </div>
@@ -1073,19 +1274,31 @@ class Handler(BaseHTTPRequestHandler):
         return db.session_user(conn, cookie_value(self, "vb_session"))
 
     # ---------- dispatch
+    def safe_route(self, route, conn):
+        try:
+            auto_submit_expired(conn)
+            route(conn)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception:  # noqa: BLE001 — یک خطای گذرا نباید صفحهٔ خام بدهد
+            import traceback
+            traceback.print_exc()
+            try:
+                self.send_html(render_error(self.current_user(conn), 500), 500)
+            except Exception:  # noqa: BLE001
+                pass
+
     def do_GET(self):
         conn = db.connect()
         try:
-            auto_submit_expired(conn)
-            self.route_get(conn)
+            self.safe_route(self.route_get, conn)
         finally:
             conn.close()
 
     def do_POST(self):
         conn = db.connect()
         try:
-            auto_submit_expired(conn)
-            self.route_post(conn)
+            self.safe_route(self.route_post, conn)
         finally:
             conn.close()
 
@@ -1093,6 +1306,24 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         user = self.current_user(conn)
         page.current_path = path
+
+        if path == "/sw.js":
+            fp = os.path.join(STATIC, "sw.js")
+            with open(fp, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Service-Worker-Allowed", "/")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        if path == "/offline":
+            with open(os.path.join(STATIC, "offline.html"), "rb") as f:
+                self.send_file(f.read(), "text/html; charset=utf-8")
+            return
 
         if path.startswith("/static/"):
             rel = path[len("/static/"):]
@@ -1104,11 +1335,13 @@ class Handler(BaseHTTPRequestHandler):
                 ext = name.rsplit(".", 1)[-1]
                 ctype = {"css": "text/css; charset=utf-8",
                          "js": "application/javascript; charset=utf-8",
+                         "html": "text/html; charset=utf-8",
+                         "webmanifest": "application/manifest+json; charset=utf-8",
                          "woff2": "font/woff2"}.get(ext, "application/octet-stream")
                 with open(fp, "rb") as f:
                     self.send_file(f.read(), ctype)
             else:
-                self.send_html("Not found", 404)
+                self.send_html(render_error(self.current_user(conn), 404), 404)
             return
 
         if path == "/login":
@@ -1117,6 +1350,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/logout":
             token = cookie_value(self, "vb_session")
             if token:
+                row = db.session_user(conn, token)
+                if row:
+                    db.log_audit(conn, row["id"], "logout", "خروج از حساب", client_ip(self), detect_device(self))
                 db.delete_session(conn, token)
             self.redirect("/login", "vb_session=; Path=/; Max-Age=0")
             return
@@ -1156,7 +1392,31 @@ class Handler(BaseHTTPRequestHandler):
             for r in conn.execute("SELECT * FROM answers WHERE attempt_id=?", (attempt["id"],)):
                 answers[r["qid"]] = json.loads(r["payload"])
             page.current_path = "/exam"
+            conn.execute("UPDATE attempts SET last_seen=? WHERE id=?", (int(time.time()), attempt["id"]))
+            conn.commit()
             self.send_html(render_exam(user, attempt, answers))
+            return
+
+        m = re.match(r"^/report/(\d+)$", path)
+        if m:
+            row = conn.execute("SELECT a.*, u.display_name AS owner, u.username AS owner_username FROM attempts a JOIN users u ON u.id=a.user_id WHERE a.id=?",
+                               (int(m.group(1)),)).fetchone()
+            allowed = row and row["submitted_at"] and (user["role"] in ("grader", "admin") or row["user_id"] == user["id"])
+            if not allowed:
+                self.send_html(render_error(user, 404, "کارنامه‌ای برای این تلاش موجود نیست."), 404)
+                return
+            html = reportcard.render_report(conn, row, row["owner"])
+            if urlparse(self.path).query.find("download=1") >= 0:
+                data = html.encode("utf-8")
+                name = re.sub(r"[^A-Za-z0-9_.-]", "_", row["owner_username"] or "report")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition", f'attachment; filename="vazheban-report-{name}.html"')
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.send_html(html)
             return
 
         if path == "/exam/time":
@@ -1164,11 +1424,17 @@ class Handler(BaseHTTPRequestHandler):
             if not attempt:
                 self.send_json({"active": False})
             else:
+                conn.execute("UPDATE attempts SET last_seen=? WHERE id=?", (int(time.time()), attempt["id"]))
+                conn.commit()
                 self.send_json({"active": True, "remaining": attempt["deadline"] - int(time.time())})
             return
 
         if path == "/admin" and user["role"] == "admin":
             self.send_html(render_admin(user, conn))
+            return
+
+        if path == "/admin/live" and user["role"] == "admin":
+            self.send_html(render_live(user, conn))
             return
 
         if path == "/grader" and user["role"] in ("grader", "admin"):
@@ -1179,7 +1445,7 @@ class Handler(BaseHTTPRequestHandler):
         if m and user["role"] in ("grader", "admin"):
             html = render_grader_attempt(user, conn, int(m.group(1)))
             if html is None:
-                self.send_html("تلاش پیدا نشد", 404)
+                self.send_html(render_error(user, 404, "این تلاش در سامانه ثبت نشده است."), 404)
             else:
                 self.send_html(html)
             return
@@ -1201,7 +1467,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_file(csv_bytes(export_raw_rows(conn)), "text/csv; charset=utf-8", "vazheban-answers.csv")
             return
 
-        self.send_html(page("یافت نشد", "<div class='card'><h1>صفحه پیدا نشد</h1><a class='btn' href='/'>بازگشت</a></div>", user), 404)
+        self.send_html(render_error(user, 404), 404)
 
     def route_post(self, conn):
         path = urlparse(self.path).path
@@ -1220,9 +1486,13 @@ class Handler(BaseHTTPRequestHandler):
                         "SELECT id FROM attempts WHERE user_id=? AND submitted_at IS NULL", (row["id"],)).fetchone()
                     if attempt:
                         db.log_event(conn, attempt["id"], "relogin", "ورود از دستگاه دیگر")
+                db.log_audit(conn, row["id"], "login", "ورود موفق", client_ip(self), detect_device(self))
                 home = "/admin" if row["role"] == "admin" else ("/grader" if row["role"] == "grader" else "/exam")
                 self.redirect(home, f"vb_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=172800")
             else:
+                if username:
+                    db.log_audit(conn, row["id"] if row else None, "login_failed",
+                                 f"تلاش ناموفق: {username}", client_ip(self), detect_device(self))
                 self.send_html(render_login(conn, error="نام کاربری یا رمز عبور نادرست است."), 401)
             return
 
@@ -1242,6 +1512,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_html(render_admin(user, conn, error="این نام کاربری قبلاً وجود دارد."), 400)
                 return
             db.create_user(conn, username, name, pw, "participant")
+            db.log_audit(conn, user["id"], "admin_create_user", f"ساخت کاربر {username}",
+                         client_ip(self), detect_device(self))
             self.send_html(render_admin(user, conn, notice=f"کاربر «{username}» ساخته شد."))
             return
 
@@ -1259,6 +1531,8 @@ class Handler(BaseHTTPRequestHandler):
             db.set_password(conn, uid, pw)
             conn.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
             conn.commit()
+            db.log_audit(conn, user["id"], "admin_reset_password", f"تغییر رمز {target['username']}",
+                         client_ip(self), detect_device(self))
             self.send_html(render_admin(user, conn, notice=f"رمز «{target['username']}» تغییر کرد."))
             return
 
@@ -1278,6 +1552,8 @@ class Handler(BaseHTTPRequestHandler):
                 conn.execute("DELETE FROM events WHERE attempt_id=?", (old["id"],))
                 conn.execute("DELETE FROM attempts WHERE id=?", (old["id"],))
                 conn.commit()
+            db.log_audit(conn, user["id"], "admin_reset_attempt", f"بازنشانی تلاش {target['username']}",
+                         client_ip(self), detect_device(self))
             self.send_html(render_admin(user, conn, notice=f"تلاش «{target['username']}» پاک شد؛ می‌تواند دوباره آزمون بدهد."))
             return
 
@@ -1290,14 +1566,16 @@ class Handler(BaseHTTPRequestHandler):
                 now = int(time.time())
                 seed = secrets.randbelow(1_000_000)
                 order = order_for(seed, user["username"])
+                device = detect_device(self)
                 conn.execute(
-                    "INSERT INTO attempts (user_id, exam_version, started_at, deadline, status, seed, order_json, ip) "
-                    "VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT INTO attempts (user_id, exam_version, started_at, deadline, status, seed, order_json, "
+                    "ip, device, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (user["id"], VERSION, now, now + DURATION, "in_progress", seed,
-                     json.dumps(order, ensure_ascii=False), self.client_address[0]))
+                     json.dumps(order, ensure_ascii=False), client_ip(self), device, now))
                 conn.commit()
                 attempt = conn.execute("SELECT * FROM attempts WHERE user_id=?", (user["id"],)).fetchone()
-                db.log_event(conn, attempt["id"], "start")
+                db.log_event(conn, attempt["id"], "start", device)
+                db.log_audit(conn, user["id"], "exam_start", "شروع آزمون", client_ip(self), device)
             self.redirect("/exam")
             return
 
@@ -1319,6 +1597,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             auto = grading.grade_auto(q, payload) if q["auto"] else None
             now = int(time.time())
+            conn.execute("UPDATE attempts SET last_seen=? WHERE id=?", (now, attempt["id"]))
             existing = conn.execute("SELECT * FROM answers WHERE attempt_id=? AND qid=?",
                                     (attempt["id"], qid)).fetchone()
             # زمان صرف‌شده: از اولین پاسخ تا آخرین ویرایش روی همین سوال
@@ -1381,6 +1660,7 @@ class Handler(BaseHTTPRequestHandler):
                          (int(time.time()), attempt["id"]))
             conn.commit()
             db.log_event(conn, attempt["id"], "submit")
+            db.log_audit(conn, user["id"], "exam_submit", "ارسال آزمون", client_ip(self), detect_device(self))
             recompute_attempt(conn, attempt["id"])
             self.send_json({"ok": True, "redirect": "/exam"})
             return

@@ -66,6 +66,9 @@ class TestHTTP(unittest.TestCase):
         subprocess.run([sys.executable, "manage.py", "create-users", "--participants", "3",
                         "--grader", "t_grader", "--grader-password", "graderpass"],
                        cwd=APP_DIR, env=env, check=True, capture_output=True)
+        subprocess.run([sys.executable, "manage.py", "upsert-user", "t_admin",
+                        "--password", "adminpass", "--name", "مدیر آزمون", "--role", "admin"],
+                       cwd=APP_DIR, env=env, check=True, capture_output=True)
         cls.env = env
         cls.proc = subprocess.Popen([sys.executable, "app.py"], cwd=APP_DIR, env=env,
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -345,6 +348,73 @@ class TestHTTP(unittest.TestCase):
         _, own = c.get_text("/exam")
         self.assertNotIn("پاسخ مرجع نمونه", own)
         self.assertNotIn("کلید:", own)
+
+    def test_12_service_worker_served_at_root_scope(self):
+        """Service Worker از ریشه سرو می‌شود و صفحهٔ آفلاین و ثبت آن در دسترس است."""
+        with urllib.request.urlopen(self.base + "/sw.js", timeout=10) as r:
+            body = r.read().decode("utf-8")
+            self.assertEqual(r.status, 200)
+            self.assertIn("javascript", r.headers["Content-Type"])
+            self.assertEqual(r.headers.get("Service-Worker-Allowed"), "/")
+        self.assertIn("addEventListener('fetch'", body)
+        self.assertIn("/static/offline.html", body)
+        with urllib.request.urlopen(self.base + "/static/offline.html", timeout=10) as r:
+            self.assertIn("text/html", r.headers["Content-Type"])
+        with urllib.request.urlopen(self.base + "/offline", timeout=10) as r:
+            offline = r.read().decode("utf-8")
+        self.assertIn("اتصال اینترنتتان قطع است", offline)
+        with urllib.request.urlopen(self.base + "/login", timeout=10) as r:
+            login = r.read().decode("utf-8")
+        self.assertIn("/static/register-sw.js", login)
+
+    def test_13_friendly_error_page(self):
+        c = self.login("sup01", self._password("sup01"))
+        # کاربر واردشده: صفحهٔ عادی ۴۰۴؛ کاربر ناشناس: هدایت به ورود (همان رفتار قبلی)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            c.get("/this-page-does-not-exist")
+        self.assertEqual(ctx.exception.code, 404)
+        body = ctx.exception.read().decode("utf-8")
+        self.assertIn("این صفحه پیدا نشد", body)
+        self.assertIn("بازگشت به آزمون", body)
+        self.assertNotIn("Not found", body)
+
+    def test_14_admin_live_status_and_audit_log(self):
+        a = self.login("t_admin", "adminpass")
+        status, html = a.get_text("/admin/live")
+        self.assertEqual(status, 200)
+        for text in ("وضعیت زندهٔ آزمون", "در حال آزمون", "تمام‌کرده", "منقضی",
+                     "نیمه‌کاره خارج‌شده", "لاگ ورودها و عملیات", "کارشناس پشتیبانی ۰۱"):
+            self.assertIn(text, html)
+        self.assertIn("لپ‌تاپ", html)   # دستگاه درخواست‌های تست، مرورگر دسکتاپ است
+        self.assertIn("ورود", html)    # ثبت ورودها
+        # شرکت‌کننده به صفحهٔ مدیر دسترسی ندارد
+        c = self.login("sup01", self._password("sup01"))
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            c.get("/admin/live")
+        self.assertEqual(ctx.exception.code, 404)
+        self.assertIn("این صفحه پیدا نشد", ctx.exception.read().decode("utf-8"))
+
+    def test_15_downloadable_report_card(self):
+        c = self.login("sup01", self._password("sup01"))
+        _, html = c.get_text("/exam")
+        import re
+        m = re.search(r"/report/(\d+)", html)
+        self.assertIsNotNone(m, "لینک کارنامه روی صفحهٔ نتیجه نیست")
+        aid = m.group(1)
+        status, card = c.get_text(f"/report/{aid}")
+        self.assertEqual(status, 200)
+        for text in ("کارنامهٔ آزمون کیس‌محور", "نتیجه به تفکیک بخش",
+                     "مباحثی که مسلط شده‌اید", "مباحثی که باید بیشتر بخوانید",
+                     "برنامهٔ بهبود"):
+            self.assertIn(text, card)
+        with c.get(f"/report/{aid}?download=1") as r:
+            self.assertIn("attachment", r.headers.get("Content-Disposition", ""))
+            self.assertIn("vazheban-report-sup01", r.headers.get("Content-Disposition", ""))
+        # کارنامهٔ دیگران برای این شرکت‌کننده باز نیست
+        other = self.login("sup02", self._password("sup02"))
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            other.get(f"/report/{aid}")
+        self.assertEqual(ctx.exception.code, 404)
 
     @staticmethod
     def _password(username):

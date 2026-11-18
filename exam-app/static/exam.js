@@ -212,6 +212,8 @@
   }
 
   // ------------------------------- saving
+  const unsaved = new Set();   // پاسخ‌هایی که هنوز روی سرور ذخیره نشده‌اند
+
   async function save(qid) {
     if (submitted) return;
     try {
@@ -221,12 +223,29 @@
         body: JSON.stringify({ qid, payload: answers[qid] || {} }),
       });
       if (res.ok) {
+        unsaved.delete(qid);
         const data = await res.json();
         if (typeof data.remaining === "number") lastTick = data.remaining;
+      } else {
+        unsaved.add(qid);
       }
-    } catch (err) { /* شبکه قطع شد؛ پاسخ در حافظه است و بعداً دوباره ذخیره می‌شود */ }
+    } catch (err) {
+      /* شبکه قطع شد؛ پاسخ در حافظه و localStorage است و با برگشتن اتصال دوباره فرستاده می‌شود */
+      unsaved.add(qid);
+    }
     updateProgress();
   }
+
+  // ذخیرهٔ آفلاین واقعی: پس از برگشت اینترنت، هر پاسخ ذخیره‌نشده دوباره ارسال می‌شود
+  window.addEventListener("online", () => {
+    if (!unsaved.size) return;
+    const qids = Array.from(unsaved);
+    flash("اتصال برگشت؛ " + qids.length + " پاسخ ذخیره‌نشده دوباره ارسال می‌شود.");
+    qids.forEach((q) => save(q));
+  });
+  window.addEventListener("offline", () => {
+    flash("اتصال قطع شد؛ پاسخ‌ها روی همین دستگاه ذخیره می‌شوند و بعد ارسال می‌شوند.");
+  });
 
   function debounce(fn, ms) {
     let h;

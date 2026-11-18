@@ -659,3 +659,19 @@ form.inline input[type=text] { width: auto; }
   .card, .panel { padding: 20px; }
   .page-title { font-size: 24px; }
 }
+
+/* ---- وضعیت زنده، خطای دوستانه و کارنامه ---- */
+.livehead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.livechip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 12px; border-radius: 20px; background: #e5f2e8; color: #23603a; }
+.miniprogress { height: 6px; border-radius: 4px; background: var(--line, #e4dbd0); overflow: hidden; margin-bottom: 3px; }
+.miniprogress span { display: block; height: 100%; background: var(--accent); }
+.twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.actions.center { justify-content: center; text-align: center; }
+.errorpage { max-width: 520px; margin: 60px auto; text-align: center; padding: 20px; }
+.errorpage .error-code { font-size: 54px; color: var(--accent); opacity: .55; line-height: 1; margin-bottom: 10px; }
+.errorpage h1 { font-size: 24px; margin-bottom: 8px; }
+.error-sub { color: var(--ink-2, #4a423b); line-height: 1.9; }
+@media (max-width: 640px) {
+  .twocol { grid-template-columns: 1fr; }
+  .errorpage { margin: 28px auto; }
+}

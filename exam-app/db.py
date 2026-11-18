@@ -57,6 +57,16 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    action TEXT NOT NULL,
+    detail TEXT,
+    ip TEXT,
+    device TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_time ON audit(created_at);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     attempt_id INTEGER NOT NULL,
@@ -79,6 +89,8 @@ def connect():
 MIGRATIONS = [
     ("answers", "first_at", "ALTER TABLE answers ADD COLUMN first_at INTEGER"),
     ("answers", "time_spent", "ALTER TABLE answers ADD COLUMN time_spent INTEGER NOT NULL DEFAULT 0"),
+    ("attempts", "device", "ALTER TABLE attempts ADD COLUMN device TEXT"),
+    ("attempts", "last_seen", "ALTER TABLE attempts ADD COLUMN last_seen INTEGER"),
 ]
 
 
@@ -168,6 +180,17 @@ def close_other_sessions(conn, user_id, keep_token):
         count += 1
     conn.commit()
     return count
+
+
+def log_audit(conn, user_id, action, detail="", ip="", device=""):
+    """لاگ سبک عملیات: ورود، خروج، ارسال، اقدام‌های مدیر."""
+    conn.execute(
+        "INSERT INTO audit (user_id, action, detail, ip, device, created_at) VALUES (?,?,?,?,?,?)",
+        (user_id, action, (detail or "")[:200], (ip or "")[:60], (device or "")[:40], int(time.time())),
+    )
+    # نگه‌داشتن حجم کم: فقط ۵۰۰۰ رخداد آخر
+    conn.execute("DELETE FROM audit WHERE id <= (SELECT MAX(id) - 5000 FROM audit)")
+    conn.commit()
 
 
 def log_event(conn, attempt_id, kind, detail=""):

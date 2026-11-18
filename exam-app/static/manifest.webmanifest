@@ -1,0 +1,10 @@
+{
+  "name": "آزمون واژه‌بان",
+  "short_name": "واژه‌بان",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbf9f5",
+  "theme_color": "#7a1f2b"
+}
