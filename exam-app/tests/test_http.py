@@ -285,7 +285,7 @@ class TestHTTP(unittest.TestCase):
         self.assertNotIn('size="6"', html)                      # فهرست بسته است، پس از انتخاب باز می‌شود
 
     def test_09_short_answers_block_submit(self):
-        """پاسخ تشریحی کمتر از ۵۰ کاراکتر مانع ارسال است."""
+        """پاسخ تشریحی کمتر از ۳۰ کاراکتر مانع ارسال است."""
         c = self.login("sup03", self._password("sup03"))
         c.post("/exam/start")
         c.post("/api/answer", raw=json.dumps({"qid": "A1", "payload": {"choice": "ب"}}).encode())

@@ -110,7 +110,7 @@
   }
 
   // ------------------------------- ممنوعیت کپی/پیست
-  const MIN_CHARS = S.minChars || 50;
+  const MIN_CHARS = S.minChars || 30;
 
   function report(kind, detail) {
     if (submitted) return;
