@@ -13,7 +13,8 @@ cd "$SRC"
 python3 -m unittest tests.test_exam || { echo "❌ تست واحد شکست خورد؛ استقرار متوقف شد" >&2; exit 1; }
 python3 tests/test_http.py || { echo "❌ تست HTTP شکست خورد؛ استقرار متوقف شد" >&2; exit 1; }
 python3 tests/test_responsive.py || { echo "❌ تست رسپانسیو شکست خورد؛ استقرار متوقف شد" >&2; exit 1; }
-node --check "$SRC/static/exam.js" 2>/dev/null || true
+node --check "$SRC/static/exam.js" || { echo "❌ خطای نحوی در exam.js" >&2; exit 1; }
+node "$SRC/tests/test_examjs.js" || { echo "❌ تست اجرایی exam.js شکست خورد؛ استقرار متوقف شد" >&2; exit 1; }
 
 echo "→ ارسال فایل‌ها به $SERVER:$APP_DIR"
 ssh "$SERVER" "mkdir -p $APP_DIR/static $DATA_DIR && chown www-data:www-data $DATA_DIR && rm -rf $APP_DIR/*.py $APP_DIR/static"

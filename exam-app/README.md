@@ -92,7 +92,12 @@ python3 manage.py import-users --file ../exam-users.tsv --replace
 python3 -m unittest tests.test_exam -v
 python3 tests/test_http.py -v
 python3 tests/test_responsive.py -v
+node tests/test_examjs.js          # اجرای واقعی exam.js در محیط DOM حداقلی
 ```
+
+`tests/test_examjs.js` فایل `exam.js` را در یک DOM حداقلی واقعاً اجرا می‌کند؛
+خطاهای زمان اجرا (مثل متغیر تعریف‌نشده) را که `node --check` نمی‌بیند می‌گیرد و
+بررسی می‌کند تایمر مقدار زمان نشان بدهد، نه `--:--`.
 
 `tests/test_responsive.py` بدون مرورگر، همهٔ صفحه‌ها را می‌گیرد و سه چیز را تضمین می‌کند:
 هر جدول داخل قاب اسکرول خودش است، هیچ عنصری عرض ثابت بزرگ‌تر از صفحه ندارد، و

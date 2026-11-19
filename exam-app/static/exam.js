@@ -196,7 +196,9 @@
     if (MIN_QIDS.indexOf(qid) === -1) return;
     const box = document.querySelector(`.qpanel[data-qid="${qid}"]`);
     if (!box) return;
-    const counter = charCounter(hasText);
+    // شمارنده کنار اولین فیلد متنی همین سوال ساخته می‌شود
+    const field = box.querySelector('textarea, input[type="text"]');
+    const counter = charCounter(field);
     if (!counter) return;
     const len = textOfQuestion(qid).length;
     const ok = len >= MIN_CHARS;
@@ -441,8 +443,16 @@
 
   // ------------------------------- timer (server-authoritative)
   function tick() {
-    lastTick -= 1;
     const el = document.getElementById("timer");
+    // اگر مهلت از سرور نیامده باشد، به‌جای NaN از سرور زمان بگیر
+    if (!Number.isFinite(lastTick)) {
+      if (!tick.resyncing) {
+        tick.resyncing = true;
+        syncTime().finally(() => { tick.resyncing = false; });
+      }
+      return;
+    }
+    lastTick -= 1;
     if (!el) return;
     const m = Math.max(0, Math.floor(lastTick / 60));
     const s = Math.max(0, lastTick % 60);
@@ -492,15 +502,25 @@
     try { localStorage.setItem("vazheban_draft", JSON.stringify(answers)); } catch (e) {}
   }, 1000));
 
-  wireClipboard();
-  restore();
-  wire();
-  MIN_QIDS.forEach(refreshCounter);
+  // ------------------------------- راه‌اندازی
+  // تایمر اول شروع می‌شود: ساعت آزمون حیاتی است و نباید یک خطا در بخش‌های
+  // اختیاری (شمارنده‌ها، بستن کیس، …) آن را از کار بیندازد.
+  function safe(name, fn) {
+    try { fn(); } catch (err) {
+      if (window.console) console.error("[exam] " + name, err);
+    }
+  }
+
+  tick();
+  setInterval(tick, 1000);
+  setInterval(syncTime, 30000);
+
+  safe("clipboard", wireClipboard);
+  safe("restore", restore);
+  safe("wire", wire);
+  safe("counters", () => MIN_QIDS.forEach(refreshCounter));
   if (restoredDraft) {
     flash("پاسخ‌های ذخیره‌نشدهٔ قبلی بازیابی شد و دوباره ذخیره می‌شود.");
     setTimeout(() => { S.qids.forEach((qid) => save(qid)); }, 1200);
   }
-  tick();
-  setInterval(tick, 1000);
-  setInterval(syncTime, 30000);
 })();
