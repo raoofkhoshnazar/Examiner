@@ -500,6 +500,36 @@ class TestHTTP(unittest.TestCase):
         with victim.get("/exam") as r:
             self.assertIn("/login", r.url)
 
+    def test_17_choice_groups_are_per_question(self):
+        """هر سوال چهارگزینه‌ای گروه رادیوی خودش را دارد.
+
+        نام مشترک «answer» همهٔ سوال‌ها را یک گروه می‌کرد: انتخاب گزینه در یک
+        سوال، انتخاب سوال‌های قبلی را از بین می‌برد و بعد از رفرش هم فقط یکی
+        بازیابی می‌شد.
+        """
+        import re
+        admin = self.login("t_admin", "adminpass")
+        admin.post("/admin/create-user", {"username": "t_choice", "display_name": "گروه گزینه‌ها",
+                                          "password": "choicepass"})
+        c = self.login("t_choice", "choicepass")
+        c.post("/exam/start")
+        _, html = c.get_text("/exam")
+        names = re.findall(r'<input type="radio" name="([^"]+)" value="[^"]*" data-qid="([^"]+)"', html)
+        self.assertTrue(names, "گزینهٔ رادیویی روی صفحهٔ آزمون نیست")
+        bad = [(n, q) for n, q in names if not n.endswith("_" + q)]
+        self.assertEqual(bad, [], "نام گروه رادیو به سوال خودش گره نخورده: %s" % bad[:3])
+        # هیچ نامِ عمومی بی‌مالک باقی نمانده باشد
+        self.assertNotIn('name="answer"', html)
+        self.assertNotIn('name="answer_multi"', html)
+        # هر گروه فقط در یک سوال تکرار می‌شود
+        by_name = {}
+        for n, q in names:
+            by_name.setdefault(n, set()).add(q)
+        self.assertEqual([n for n, qs in by_name.items() if len(qs) > 1], [])
+        # تعداد گروه‌ها = تعداد سوال‌های تک‌گزینه‌ای
+        multi = re.findall(r'<input type="checkbox" name="answer_multi_', html)
+        self.assertTrue(multi, "سوال چندانتخابی گروه خودش را ندارد")
+
     @staticmethod
     def _password(username):
         # رمزها هنگام ساخت کاربران به تصادف تولید می‌شوند؛ در setUpClass نگه داشته می‌شوند

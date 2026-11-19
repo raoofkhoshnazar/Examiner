@@ -11,14 +11,23 @@
   let submitted = false;
   let lastTick = Math.round((S.deadline - S.serverNow));
 
+  /* نام گروه گزینه‌ها مخصوص هر سوال است (answer_A1، answer_multi_B1).
+     تطبیق دقیق با «answer» باعث می‌شد گزینه‌های یک سوال در سوال دیگر هم
+     انتخاب‌شده به‌نظر برسند یا انتخاب قبلی پاک شود. */
+  const isChoiceGroup = (el) => (el.name || "").indexOf("answer_") === 0 && !isMultiGroup(el);
+  const isMultiGroup = (el) => (el.name || "").indexOf("answer_multi") === 0;
+
   // ------------------------------- state bootstrap
   (S.saved || {}) && Object.keys(S.saved).forEach((qid) => { answers[qid] = S.saved[qid] || {}; });
 
   // پاسخ‌هایی که هنگام قطعی اتصال فقط در مرورگر ذخیره شده‌اند، برمی‌گردند
   let restoredDraft = false;
+  // پیش‌نویس به همین تلاش آزمون گره می‌خورد؛ پیش‌نویس تلاش قبلی (پس از
+  // بازنشانی) نباید وارد آزمون تازه شود
+  const DRAFT_KEY = "vazheban_draft_" + (S.attemptId != null ? S.attemptId : "x");
   function mergeDraft() {
     let draft = null;
-    try { draft = JSON.parse(localStorage.getItem("vazheban_draft") || "null"); } catch (err) { draft = null; }
+    try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch (err) { draft = null; }
     if (!draft || typeof draft !== "object") return;
     const isEmpty = (v) => v == null || v === "" || (Array.isArray(v) && !v.length) ||
       (typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
@@ -50,10 +59,10 @@
       const data = answers[qid];
       if (!data) return;
       if (el.tagName === "INPUT" && el.type === "radio") {
-        if (el.name === "answer" && data.choice === el.value) el.checked = true;
+        if (isChoiceGroup(el)) { if (data.choice === el.value) el.checked = true; }
         if (el.dataset.field === "conclusion" && data.conclusion === el.value) el.checked = true;
       } else if (el.tagName === "INPUT" && el.type === "checkbox") {
-        if (el.name === "answer_multi") el.checked = (data.choices || []).includes(el.value);
+        if (isMultiGroup(el)) el.checked = (data.choices || []).includes(el.value);
         if (el.classList.contains("claimchk")) el.checked = (data.claims || []).includes(el.value);
       } else if (el.tagName === "SELECT" && el.dataset.pid) {
         const pid = el.dataset.pid;
@@ -218,8 +227,22 @@
 
   // ------------------------------- saving
   const unsaved = new Set();   // پاسخ‌هایی که هنوز روی سرور ذخیره نشده‌اند
+  const inflight = {};         // زنجیرهٔ ذخیرهٔ هر سوال: درخواست‌ها هم‌زمان نمی‌شوند
+  const seq = {};              // آخرین نسخهٔ ارسال‌شده؛ پاسخ کهنه نادیده گرفته می‌شود
 
-  async function save(qid) {
+  /* هر سوال یک زنجیرهٔ ذخیرهٔ جدا دارد. اگر کاربر سریع تایپ کند و درخواست‌ها
+     هم‌زمان بروند، ممکن است نسخهٔ کوتاه‌تر دیرتر برسد و نسخهٔ تازه را
+     بازنویسی کند؛ به همین دلیل درخواست‌های یک سوال پشت سر هم اجرا می‌شوند. */
+  function save(qid) {
+    if (submitted) return Promise.resolve();
+    seq[qid] = (seq[qid] || 0) + 1;
+    const mine = seq[qid];
+    const run = () => sendAnswer(qid, mine);
+    inflight[qid] = (inflight[qid] || Promise.resolve()).then(run, run);
+    return inflight[qid];
+  }
+
+  async function sendAnswer(qid, mine) {
     if (submitted) return;
     try {
       const res = await fetch("/api/answer", {
@@ -238,7 +261,8 @@
       /* شبکه قطع شد؛ پاسخ در حافظه و localStorage است و با برگشتن اتصال دوباره فرستاده می‌شود */
       unsaved.add(qid);
     }
-    updateProgress();
+    // اگر در این فاصله نسخهٔ تازه‌تری ساخته شده، همان در نوبت است و این را نادیده بگیر
+    if (mine === seq[qid]) updateProgress();
   }
 
   // ذخیرهٔ آفلاین واقعی: پس از برگشت اینترنت، هر پاسخ ذخیره‌نشده دوباره ارسال می‌شود
@@ -266,6 +290,16 @@
     saveSoon[qid]();
   }
 
+  /* در حین تایپ هم پاسخ ذخیره می‌شود، نه فقط هنگام رفتن به فیلد بعدی.
+     رخداد «change» فقط با خروج از فیلد می‌آید؛ اگر کاربر بین دو سوال جا
+     به‌جا شود یا صفحه بسته شود، متن نوشته‌شده از دست می‌رفت. */
+  function onType(el) {
+    const qid = el.dataset ? el.dataset.qid : null;
+    if (!qid || !el.dataset.field) return;
+    setAnswer(qid, el.dataset.field, el.value || "");
+    queueSave(qid);
+  }
+
   // ------------------------------- event wiring
   function wire() {
     document.addEventListener("change", (ev) => {
@@ -273,10 +307,10 @@
       const qid = el.dataset ? el.dataset.qid : null;
       if (!qid) return;
 
-      if (el.type === "radio" && el.name === "answer") {
+      if (el.type === "radio" && isChoiceGroup(el)) {
         setAnswer(qid, "choice", el.value);
         save(qid);
-      } else if (el.type === "checkbox" && el.name === "answer_multi") {
+      } else if (el.type === "checkbox" && isMultiGroup(el)) {
         const box = el.closest(".options");
         const vals = Array.from(box.querySelectorAll(`input[value]`)).filter((x) => x.checked).map((x) => x.value);
         setAnswer(qid, "choices", vals);
@@ -373,6 +407,8 @@
     });
     document.getElementById("modalCancel").addEventListener("click", () => modal.classList.remove("show"));
     document.getElementById("modalConfirm").addEventListener("click", async () => {
+      // پاسخ‌های تازه‌تایپ‌شده باید پیش از بسته‌شدن آزمون روی سرور بنشینند
+      try { await Promise.all(S.qids.map((qid) => save(qid))); } catch (err) {}
       try {
         const res = await fetch("/api/submit", {
           method: "POST",
@@ -389,7 +425,7 @@
         }
       } catch (err) { /* خطای شبکه؛ سرور با مهلت خودش ارسال می‌کند */ }
       submitted = true;
-      try { localStorage.removeItem("vazheban_draft"); } catch (e) {}
+      try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
       window.location.href = "/exam";
     });
 
@@ -397,10 +433,13 @@
       if (!submitted) { ev.preventDefault(); ev.returnValue = ""; }
     });
 
-    // شمارندهٔ کاراکتر هنگام تایپ
+    // شمارندهٔ کاراکتر و ذخیرهٔ تدریجی هنگام تایپ
     document.addEventListener("input", (ev) => {
       const el = ev.target;
-      if (el && el.dataset && el.dataset.qid) refreshCounter(el.dataset.qid);
+      if (el && el.dataset && el.dataset.qid) {
+        refreshCounter(el.dataset.qid);
+        onType(el);
+      }
     });
 
     // ثبت خروج از صفحهٔ آزمون
@@ -499,7 +538,7 @@
 
   // ذخیرهٔ موقت در مرورگر برای قطعی اتصال
   document.addEventListener("input", debounce(() => {
-    try { localStorage.setItem("vazheban_draft", JSON.stringify(answers)); } catch (e) {}
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(answers)); } catch (e) {}
   }, 1000));
 
   // ------------------------------- راه‌اندازی

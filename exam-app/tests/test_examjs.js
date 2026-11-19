@@ -63,12 +63,14 @@ function run({ withQuestions = true } = {}) {
     return null;
   };
 
+  const listeners = [];        // (type, handler) برای شبیه‌سازی رخدادها
+  const calls = [];            // درخواست‌های fetch برای بررسی محتوای ذخیره‌شده
   const document = {
     getElementById: (id) => byId[id] || makeEl({ id }),
     querySelector: found,
     querySelectorAll: (sel) => (sel === "[data-qid]" && withQuestions ? [field] : []),
     createElement: () => makeEl(),
-    addEventListener: () => {},
+    addEventListener: (type, fn) => listeners.push([type, fn]),
     body: makeEl(),
   };
   panel.querySelector = (sel) => (sel === 'textarea, input[type="text"]' ? field : null);
@@ -80,7 +82,10 @@ function run({ withQuestions = true } = {}) {
     window: null,
     document,
     localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
-    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ active: true, remaining: 3600 }) }),
+    fetch: (url, opts) => {
+      calls.push({ url, body: opts && opts.body ? String(opts.body) : "" });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ active: true, remaining: 3600 }) });
+    },
     navigator: { clipboard: undefined, sendBeacon: undefined },
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -105,6 +110,7 @@ function run({ withQuestions = true } = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.EXAM_STATE = {
+    attemptId: 7,
     deadline: 1_700_000_000 + 3600,
     serverNow: 1_700_000_000,
     qids: ["A1", "C1", "F1"],
@@ -116,7 +122,20 @@ function run({ withQuestions = true } = {}) {
 
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(SRC, "utf-8"), sandbox, { filename: "exam.js" });
-  return { sandbox, errors, timer, answered, progress, timers };
+  return { sandbox, errors, timer, answered, progress, timers, listeners, calls, field };
+}
+
+/* یک رخداد را مثل مرورگر به شنونده‌های ثبت‌شده می‌رساند */
+function fire(r, type, target) {
+  r.listeners.filter(([t]) => t === type).forEach(([, fn]) => fn({ target, preventDefault() {} }));
+}
+
+/* زمان‌سنج‌های debounce را اجرا می‌کند تا ذخیره واقعاً انجام شود */
+async function flushTimers(r) {
+  const pending = r.timers.timeouts.splice(0, r.timers.timeouts.length);
+  pending.forEach((fn) => fn());
+  await new Promise((res) => setImmediate(res));
+  await new Promise((res) => setImmediate(res));
 }
 
 let failed = 0;
@@ -165,5 +184,57 @@ function check(name, cond, detail = "") {
   check("منبع تایمر از عدد متناهی محافظت می‌کند", src.includes("Number.isFinite(lastTick)"));
 }
 
-console.log(failed ? `\n${failed} تست شکست خورد` : "\nهمهٔ تست‌های exam.js گذشت");
-process.exit(failed ? 1 : 0);
+// ---------------------------------------------------------------- پاسخ‌ها گم نشوند
+(async () => {
+  const r = run();
+
+  // تایپ در یک سوال تشریحی، بدون خروج از فیلد
+  const ta1 = makeEl({ tagName: "TEXTAREA", dataset: { qid: "C1", field: "explain" } });
+  ta1.value = "پاسخ تشریحی سوال اول";
+  fire(r, "input", ta1);
+  await flushTimers(r);
+
+  const posts = () => r.calls.filter((c) => c.url === "/api/answer").map((c) => JSON.parse(c.body));
+  check("تایپ در فیلد بلافاصله ذخیره می‌شود (بدون نیاز به خروج از فیلد)",
+        posts().some((b) => b.qid === "C1" && b.payload.explain === "پاسخ تشریحی سوال اول"),
+        JSON.stringify(posts()));
+
+  // سپس تایپ در سوال دیگر: پاسخ قبلی نباید پاک شود
+  const ta2 = makeEl({ tagName: "TEXTAREA", dataset: { qid: "F1", field: "text" } });
+  ta2.value = "پاسخ سوال دوم";
+  fire(r, "input", ta2);
+  await flushTimers(r);
+
+  const last = posts().filter((b) => b.qid === "C1").pop();
+  check("پاسخ سوال قبلی پس از پاسخ دادن به سوال بعدی دست‌نخورده می‌ماند",
+        last && last.payload.explain === "پاسخ تشریحی سوال اول",
+        JSON.stringify(last));
+
+  // گزینه‌های هر سوال گروه مستقل دارند: انتخاب در یک سوال، انتخاب دیگری را پاک نمی‌کند
+  const radioA1 = makeEl({ tagName: "INPUT", type: "radio", name: "answer_A1", value: "ب",
+                           dataset: { qid: "A1" } });
+  fire(r, "change", radioA1);
+  const radioA2 = makeEl({ tagName: "INPUT", type: "radio", name: "answer_A2", value: "ج",
+                           dataset: { qid: "A2" } });
+  fire(r, "change", radioA2);
+  await flushTimers(r);
+
+  const saved = {};
+  posts().forEach((b) => { saved[b.qid] = b.payload; });
+  check("انتخاب هر سوال چهارگزینه‌ای جداگانه ذخیره می‌شود",
+        saved.A1 && saved.A1.choice === "ب" && saved.A2 && saved.A2.choice === "ج",
+        JSON.stringify(saved));
+
+  const callsBefore = posts().length;
+  const legacy = makeEl({ tagName: "INPUT", type: "radio", name: "answer", value: "الف",
+                          dataset: { qid: "A9" } });
+  fire(r, "change", legacy);
+  await flushTimers(r);
+  check("گروه عمومی و بی‌مالک «answer» دیگر پاسخ ثبت نمی‌کند",
+        posts().length === callsBefore, `تعداد درخواست‌ها: ${posts().length}`);
+
+  check("بدون خطای زمان اجرا در مسیر ذخیره", r.errors.length === 0, r.errors.join(" | "));
+
+  console.log(failed ? `\n${failed} تست شکست خورد` : "\nهمهٔ تست‌های exam.js گذشت");
+  process.exit(failed ? 1 : 0);
+})();

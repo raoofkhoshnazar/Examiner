@@ -338,7 +338,10 @@ def options_html(q, order):
     out = []
     for i, k in enumerate(keys):
         input_type = "radio" if q["kind"] != "multi" else "checkbox"
-        name = "answer" if q["kind"] != "multi" else "answer_multi"
+        # نام گروه باید مخصوص همین سوال باشد؛ نام مشترک «answer» همهٔ رادیوهای
+        # کل آزمون را یک گروه می‌کرد و انتخاب یک سوال، انتخاب سوال‌های قبلی را
+        # از بین می‌برد (و بعد از رفرش هم فقط یکی بازیابی می‌شد).
+        name = f"answer_{q['id']}" if q["kind"] != "multi" else f"answer_multi_{q['id']}"
         out.append(f"""<label class="option">
           <input type="{input_type}" name="{name}" value="{e(k)}" data-qid="{q['id']}">
           <span class="optkey">{fa(i+1)}</span>
@@ -513,6 +516,7 @@ def render_exam(user, attempt, answers):
     </div>
     <script>
       window.EXAM_STATE = {json.dumps({
+        "attemptId": attempt["id"],
         "deadline": attempt["deadline"],
         "serverNow": int(time.time()),
         "qids": [q["id"] for q in flat_questions],
@@ -520,7 +524,49 @@ def render_exam(user, attempt, answers):
         "minChars": integrity.MIN_TEXT_CHARS,
         "minCharQids": [q["id"] for q in flat_questions if integrity.min_char_fields(q)],
         "saved": answers,
+        # سازگاری با نسخهٔ کش‌شدهٔ قدیمی exam.js که فقط نام `answer` را
+        # می‌شناخت: این پرچم به آن می‌گوید نام‌های سوال‌محور را هم بپذیرد
+        "choiceGroup": "qid",
       }, ensure_ascii=False)};
+      /* سازگاری با exam.js قدیمیِ کش‌شده (نسخهٔ vb-v8): آن نسخه نام گروه
+         رادیو را دقیقاً «answer» می‌خواست. پراکسی روی HTMLInputElement.name
+         نام سوال‌محور را هنگام خواندن، همان نام قدیمی جا می‌زند؛ بنابراین
+         پاسخ گزینه‌ایِ کسانی که وسط آزمون‌اند هم ثبت می‌شود. این تکه بعد از
+         بارگذاری کامل صفحه اجرا می‌شود تا عنصرهای آزمون ساخته شده باشند. */
+      (function () {{
+        if (!window.EXAM_STATE || window.EXAM_STATE.choiceGroup !== "qid") return;
+        window.addEventListener("load", function () {{
+          var proto = window.HTMLInputElement && window.HTMLInputElement.prototype;
+          if (!proto) return;
+          var desc = Object.getOwnPropertyDescriptor(proto, "name");
+          if (!desc || !desc.get) return;
+          Object.defineProperty(proto, "name", {{
+            configurable: true,
+            enumerable: desc.enumerable,
+            get: function () {{
+              var v = desc.get.call(this);
+              if (typeof v === "string") {{
+                if (v.indexOf("answer_multi") === 0) return "answer_multi";
+                if (v.indexOf("answer_") === 0) return "answer";
+              }}
+              return v;
+            }},
+            set: desc.set,
+          }});
+        }});
+        /* نسخهٔ قدیمی متن را فقط هنگام خروج از فیلد ذخیره می‌کرد؛ با ثبت
+           رخداد «change» مصنوعی، پاسخ‌های تایپ‌شده هم در همین ثانیه‌ها
+           روی سرور می‌نشینند. */
+        function flushTyped(el) {{
+          if (!el || !el.dataset || !el.dataset.field) return;
+          el.dispatchEvent(new Event("change", {{bubbles: true}}));
+        }}
+        window.addEventListener("pagehide", function () {{
+          Array.prototype.forEach.call(
+            document.querySelectorAll("textarea[data-qid], input[type=\"text\"][data-qid]"),
+            flushTyped);
+        }});
+      }})();
     </script>
     <script src="/static/exam.js"></script>"""
     return page("آزمون — واژه‌بان", body, user, wide=True, variant="app taking-exam")
