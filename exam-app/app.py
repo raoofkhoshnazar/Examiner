@@ -861,6 +861,17 @@ def render_admin(user, conn, notice="", error=""):
                 <input type="hidden" name="user_id" value="{r['id']}">
                 <button class="btn small danger" type="submit">بازنشانی تلاش</button>
               </form>"""
+        delete_btn = ""
+        if r["id"] != user["id"]:
+            try_answers = conn.execute(
+                "SELECT COUNT(*) AS n FROM answers a JOIN attempts t ON t.id=a.attempt_id "
+                "WHERE t.user_id=?", (r["id"],)).fetchone()["n"]
+            delete_btn = f"""
+              <form method="post" action="/admin/delete-user" class="inline"
+                    onsubmit="return confirm('کاربر «{e(r['username'])}» و همهٔ پاسخ‌هایش ({fa(try_answers)} پاسخ) برای همیشه حذف شود؟ این کار برگشت‌پذیر نیست.')">
+                <input type="hidden" name="user_id" value="{r['id']}">
+                <button class="btn small danger" type="submit">حذف کاربر</button>
+              </form>"""
         out.append(f"""<tr>
           <td>{e(r['username'])}</td>
           <td>{e(r['display_name'])}</td>
@@ -873,6 +884,7 @@ def render_admin(user, conn, notice="", error=""):
               <button class="btn small" type="submit">تغییر رمز</button>
             </form>
             {reset_btn}
+            {delete_btn}
           </td>
         </tr>""")
 
@@ -1626,6 +1638,44 @@ class Handler(BaseHTTPRequestHandler):
             db.log_audit(conn, user["id"], "admin_reset_attempt", f"بازنشانی تلاش {target['username']}",
                          client_ip(self), detect_device(self))
             self.send_html(render_admin(user, conn, notice=f"تلاش «{target['username']}» پاک شد؛ می‌تواند دوباره آزمون بدهد."))
+            return
+
+        if path == "/admin/delete-user" and user["role"] == "admin":
+            form = parse_qs(self.read_body().decode("utf-8"))
+            try:
+                uid = int((form.get("user_id") or ["0"])[0])
+            except ValueError:
+                uid = 0
+            target = db.get_user(conn, uid)
+            if not target:
+                self.send_html(render_admin(user, conn, error="کاربر پیدا نشد."), 404)
+                return
+            if uid == user["id"]:
+                self.send_html(render_admin(
+                    user, conn, error="حساب خودتان را نمی‌توانید حذف کنید."), 400)
+                return
+            if target["role"] == "admin":
+                admins = conn.execute("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND active=1").fetchone()["n"]
+                if admins <= 1:
+                    self.send_html(render_admin(
+                        user, conn, error="این تنها مدیر فعال سامانه است و حذفش دسترسی مدیریت را قطع می‌کند."), 400)
+                    return
+            # حذف کامل و بی‌یتیم: پاسخ‌ها و رخدادهای تلاش، تلاش، نشست‌ها،
+            # و ارجاع‌های تصحیح/لاگ که به این کاربر اشاره می‌کردند
+            conn.execute("DELETE FROM answers WHERE attempt_id IN "
+                         "(SELECT id FROM attempts WHERE user_id=?)", (uid,))
+            conn.execute("DELETE FROM events WHERE attempt_id IN "
+                         "(SELECT id FROM attempts WHERE user_id=?)", (uid,))
+            conn.execute("DELETE FROM attempts WHERE user_id=?", (uid,))
+            conn.execute("DELETE FROM sessions WHERE user_id=?", (uid,))
+            conn.execute("UPDATE answers SET scorer_id=NULL WHERE scorer_id=?", (uid,))
+            conn.execute("UPDATE audit SET user_id=NULL WHERE user_id=?", (uid,))
+            conn.execute("DELETE FROM users WHERE id=?", (uid,))
+            conn.commit()
+            db.log_audit(conn, user["id"], "admin_delete_user",
+                         f"حذف کاربر {target['username']}", client_ip(self), detect_device(self))
+            self.send_html(render_admin(
+                user, conn, notice=f"کاربر «{target['username']}» و همهٔ سوابق آزمونش حذف شد."))
             return
 
         if path == "/exam/start":

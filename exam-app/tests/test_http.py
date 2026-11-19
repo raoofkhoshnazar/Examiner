@@ -66,6 +66,10 @@ class Client:
         with self.get(path) as r:
             return r.status, r.read().decode("utf-8")
 
+    def post_text(self, path, data=None):
+        with self.post(path, data) as r:
+            return r.status, r.read().decode("utf-8")
+
 
 class TestHTTP(unittest.TestCase):
     @classmethod
@@ -444,6 +448,57 @@ class TestHTTP(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             other.get(f"/report/{aid}")
         self.assertEqual(ctx.exception.code, 404)
+
+    def test_16_admin_can_delete_user(self):
+        """ادمین می‌تواند کاربر را با تمام سوابقش حذف کند؛ حذف خودش ممنوع است."""
+        a = self.login("t_admin", "adminpass")
+        a.post("/admin/create-user", {"username": "t_todelete", "display_name": "کاربر موقت",
+                                      "password": "temppass"})
+        victim = self.login("t_todelete", "temppass")
+        victim.post("/exam/start")
+        victim.post("/api/answer", raw=json.dumps(
+            {"qid": "A1", "payload": {"choice": "ب"}}).encode())
+
+        import sqlite3
+        def count(sql):
+            conn = sqlite3.connect(DB_PATH)
+            try:
+                return conn.execute(sql).fetchone()[0]
+            finally:
+                conn.close()
+
+        uid = count("SELECT id FROM users WHERE username='t_todelete'")
+        self.assertGreater(uid, 0)
+        self.assertGreater(count("SELECT COUNT(*) FROM attempts WHERE user_id=%d" % uid), 0)
+
+        # حذف حساب خودِ مدیر باید رد شود
+        admin_id = count("SELECT id FROM users WHERE username='t_admin'")
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            a.post("/admin/delete-user", {"user_id": str(admin_id)})
+        self.assertEqual(ctx.exception.code, 400)
+        self.assertEqual(count("SELECT COUNT(*) FROM users WHERE id=%d" % admin_id), 1)
+
+        status, html = a.post_text("/admin/delete-user", {"user_id": str(uid)})
+        self.assertEqual(status, 200)
+        self.assertIn("حذف شد", html)
+
+        self.assertEqual(count("SELECT COUNT(*) FROM users WHERE id=%d" % uid), 0)
+        self.assertEqual(count("SELECT COUNT(*) FROM attempts WHERE user_id=%d" % uid), 0)
+        self.assertEqual(count("SELECT COUNT(*) FROM sessions WHERE user_id=%d" % uid), 0)
+        self.assertEqual(count(
+            "SELECT COUNT(*) FROM answers WHERE attempt_id NOT IN (SELECT id FROM attempts)"), 0)
+        self.assertEqual(count(
+            "SELECT COUNT(*) FROM events WHERE attempt_id NOT IN (SELECT id FROM attempts)"), 0)
+        self.assertGreater(count(
+            "SELECT COUNT(*) FROM audit WHERE action='admin_delete_user'"), 0)
+
+        # کاربر حذف‌شده دیگر نمی‌تواند وارد شود
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            Client(self.base).post("/login", {"username": "t_todelete", "password": "temppass"})
+        self.assertEqual(ctx.exception.code, 401)
+        # نشست قبلی کاربر حذف‌شده هم باطل شده است
+        with victim.get("/exam") as r:
+            self.assertIn("/login", r.url)
 
     @staticmethod
     def _password(username):
