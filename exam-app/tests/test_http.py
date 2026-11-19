@@ -35,10 +35,21 @@ def free_port():
     return p
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+class _LoopbackPolicy(http.cookiejar.DefaultCookiePolicy):
+    def return_ok_secure(self, cookie, request):
+        return True
+
+
 class Client:
     def __init__(self, base):
         self.base = base
-        self.jar = http.cookiejar.CookieJar()
+        # کوکی نشست در سرور Secure است؛ در تست HTTP محلی آن را منتقل می‌کنیم
+        self.jar = http.cookiejar.CookieJar(policy=_LoopbackPolicy())
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
 
     def get(self, path):
@@ -342,6 +353,7 @@ class TestHTTP(unittest.TestCase):
         self.assertIn("زمان‌سنجی هر سوال", page)
         self.assertIn("تشابه پاسخ‌ها", page)
         self.assertIn("تلاش چسباندن", page)
+        self.assertIn("پاسخ‌های نادرست", page)
         self.assertIn("پاسخ مرجع نمونه", page)      # کلید فقط برای مصحح
         # شرکت‌کننده هیچ کلیدی نمی‌بیند
         c = self.login("sup03", self._password("sup03"))
@@ -366,6 +378,23 @@ class TestHTTP(unittest.TestCase):
         with urllib.request.urlopen(self.base + "/login", timeout=10) as r:
             login = r.read().decode("utf-8")
         self.assertIn("/static/register-sw.js", login)
+
+    def test_12b_session_cookie_is_secure(self):
+        """کوکی نشست با Secure، HttpOnly و SameSite ست می‌شود."""
+        req = urllib.request.Request(self.base + "/login",
+                                     data=urllib.parse.urlencode(
+                                         {"username": "sup03", "password": self._password("sup03")}).encode(),
+                                     method="POST")
+        opener = urllib.request.build_opener(_NoRedirect())
+        try:
+            opener.open(req, timeout=10)
+            cookies = ""
+        except urllib.error.HTTPError as err:
+            cookies = err.headers.get_all("Set-Cookie") or []
+        sc = " ".join(cookies)
+        self.assertIn("vb_session=", sc)
+        for flag in ("HttpOnly", "Secure", "SameSite=Lax"):
+            self.assertIn(flag, sc)
 
     def test_13_friendly_error_page(self):
         c = self.login("sup01", self._password("sup01"))
@@ -434,6 +463,33 @@ def main():
             passwords[parts[0]] = parts[1]
     TestHTTP.passwords = passwords
     unittest.main(module=__name__, argv=[sys.argv[0], "-v"])
+
+
+class TestWrongAnswers(unittest.TestCase):
+    def test_wrong_list_flags_wrong_and_missing(self):
+        from types import SimpleNamespace
+        import json as _json
+        import app as appmod
+        from exam_data import QUESTIONS_BY_ID
+
+        class Row(dict):
+            __getattr__ = dict.__getitem__
+
+        answers = {
+            "A1": Row(auto_score=0, payload=_json.dumps({"choice": "الف"})),
+            "B1": Row(auto_score=0, payload=_json.dumps({"choices": ["الف"]})),
+            "C1": Row(auto_score=2, payload=_json.dumps({"tf": False, "explain": "x" * 40})),
+        }
+        wrong = appmod.wrong_list(answers)
+        ids = [w["id"] for w in wrong]
+        self.assertIn("A1", ids)
+        self.assertIn("B1", ids)
+        self.assertNotIn("C1", ids)                       # تشخیص درست نمرهٔ کامل گرفته
+        self.assertNotIn("F1", ids)                       # سوال دستی در این فهرست نیست
+        a1 = next(w for w in wrong if w["id"] == "A1")
+        self.assertIn(QUESTIONS_BY_ID["A1"].get("correct"), a1["note"])
+        b1 = next(w for w in wrong if w["id"] == "B1")
+        self.assertIn("جاافتاده", b1["note"])
 
 
 if __name__ == "__main__":

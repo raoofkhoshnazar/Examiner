@@ -105,7 +105,7 @@
         return true;
       })) done++;
     });
-    document.getElementById("answeredCount").textContent = `${fa(done)} از ${fa(S.qids.length)}`;
+    document.getElementById("answeredCount").textContent = `${fa(done)} از ${fa(S.qids.length)} پاسخ`;
     document.getElementById("progress").style.width = (done / S.qids.length * 100) + "%";
   }
 
@@ -173,6 +173,8 @@
     if (!counter) {
       counter = document.createElement("div");
       counter.className = "charcount";
+      counter.setAttribute("aria-live", "polite");
+      counter.setAttribute("role", "status");
       counter.dataset.for = el.dataset.qid;
       const head = box.querySelector(".qhead");
       if (head) head.appendChild(counter);
@@ -199,6 +201,7 @@
     const len = textOfQuestion(qid).length;
     const ok = len >= MIN_CHARS;
     counter.textContent = `${fa(len)} / ${fa(MIN_CHARS)} کاراکتر`;
+    counter.setAttribute("aria-label", `حداقل ${fa(MIN_CHARS)} کاراکتر؛ نوشته‌شده ${fa(len)} کاراکتر`);
     counter.classList.toggle("ok", ok);
     counter.classList.toggle("short", !ok && len > 0);
   }
@@ -329,8 +332,11 @@
       });
     });
 
-    document.getElementById("toggleCase").addEventListener("click", () => {
-      document.querySelector(".case-pane").classList.toggle("closed");
+    document.getElementById("toggleCase").addEventListener("click", (ev) => {
+      const pane = document.querySelector(".case-pane");
+      const closed = pane.classList.toggle("closed");
+      ev.currentTarget.setAttribute("aria-expanded", String(!closed));
+      ev.currentTarget.textContent = closed ? "نمایش کیس" : "بستن کیس";
     });
 
     // ارسال

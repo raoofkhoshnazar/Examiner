@@ -1,9 +1,10 @@
 /* Service Worker واژه‌بان — ذخیرهٔ آفلاین پوستهٔ برنامه
    فقط فایل‌های ثابت و صفحهٔ آفلاین کش می‌شوند؛ پاسخ‌های API و صفحه‌های آزمون
    هیچ‌وقت کش نمی‌شوند تا دادهٔ کهنه یا کلید پاسخ جابه‌جا نشود. */
-const VERSION = 'vb-v2';
+const VERSION = 'vb-v3';
 const STATIC_CACHE = VERSION + '-static';
-const SHELL = ['/static/style.css', '/static/exam.js', '/static/offline.html'];
+const SHELL = ['/static/style.css', '/static/exam.js', '/static/offline.html',
+  '/static/favicon.svg', '/static/icons/icon-192.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

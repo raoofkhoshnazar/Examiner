@@ -721,3 +721,10 @@ form.inline input[type=text] { width: auto; }
   .fact b { font-size: 21px; }
   .auth-footer { padding: 12px 20px; font-size: 11px; }
 }
+
+/* ---- پاسخ‌های نادرست در پنل مصحح ---- */
+.wrongcard { background: var(--surface); border: 1px solid #f0d3cf; border-inline-start: 4px solid var(--red); border-radius: var(--radius); padding: 14px 18px; margin: 12px 0; }
+.wrongcard h3 { margin: 0 0 6px; font-size: 14px; color: #8b2a20; }
+.wrongcard.okcard { border-color: #cfe0d4; border-inline-start-color: var(--accent); }
+.wrongcard.okcard h3 { color: var(--accent); }
+.wronglist { margin: 8px 0 0; padding-inline-start: 18px; font-size: 13px; line-height: 1.9; }

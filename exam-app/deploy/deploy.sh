@@ -8,6 +8,12 @@ APP_DIR="/opt/vazheban-exam"
 DATA_DIR="/var/lib/vazheban-exam"
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 
+echo "→ اجرای تست‌ها پیش از استقرار"
+cd "$SRC"
+python3 -m unittest tests.test_exam || { echo "❌ تست واحد شکست خورد؛ استقرار متوقف شد" >&2; exit 1; }
+python3 tests/test_http.py || { echo "❌ تست HTTP شکست خورد؛ استقرار متوقف شد" >&2; exit 1; }
+node --check "$SRC/static/exam.js" 2>/dev/null || true
+
 echo "→ ارسال فایل‌ها به $SERVER:$APP_DIR"
 ssh "$SERVER" "mkdir -p $APP_DIR/static $DATA_DIR && chown www-data:www-data $DATA_DIR && rm -rf $APP_DIR/*.py $APP_DIR/static"
 tar -czf - --exclude='data' --exclude='__pycache__' --exclude='.git' \

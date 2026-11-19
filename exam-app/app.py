@@ -123,7 +123,7 @@ def page(title, body, user=None, extra_head="", wide=False, variant="app"):
     if user:
         role = "مدیر" if user["role"] == "admin" else ("مصحح" if user["role"] == "grader" else "شرکت‌کننده")
         if user["role"] == "participant":
-            items = [("/exam", "آزمون"), ("/guide", "راهنمای آزمون")]
+            items = [("/exam", "کارنامه"), ("/exam", "آزمون"), ("/guide", "راهنمای آزمون")]
         elif user["role"] == "grader":
             items = [("/grader", "نتایج"), ("/exam", "کارنامه")]
         else:
@@ -153,7 +153,11 @@ def page(title, body, user=None, extra_head="", wide=False, variant="app"):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{e(title)}</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 <link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#153f32">
 <script src="/static/register-sw.js" defer></script>
 {extra_head}
 </head>
@@ -237,12 +241,12 @@ def render_login(conn=None, error="", notice=""):
       <section class="auth-form">
         <h2 class="auth-title">خوش آمدید</h2>
         <p class="auth-sub">برای ورود به آزمون، اطلاعات حساب اختصاصی خود را وارد کنید.</p>
-        {f'<div class="alert error">{e(error)}</div>' if error else ''}
-        {f'<div class="alert ok">{e(notice)}</div>' if notice else ''}
-        <form method="post" action="/login" class="login-form">
+        {f'<div class="alert error" role="alert">{e(error)}</div>' if error else ''}
+        {f'<div class="alert ok" role="status">{e(notice)}</div>' if notice else ''}
+        <form method="post" action="/login" class="login-form" aria-label="ورود به سامانه">
           <label class="field">
             <span class="field-label">نام کاربری</span>
-            <select name="username" class="field-select username-list" required autofocus>
+            <select name="username" class="field-select username-list" required autofocus aria-label="نام کاربری را از فهرست انتخاب کنید">
               <option value="" disabled selected>— نام کاربری خود را از فهرست انتخاب کنید —</option>
               {options}
             </select>
@@ -250,9 +254,9 @@ def render_login(conn=None, error="", notice=""):
           </label>
           <label class="field">
             <span class="field-label">رمز عبور</span>
-            <input name="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
+            <input name="password" type="password" placeholder="••••••••" autocomplete="current-password" required aria-label="رمز عبور">
           </label>
-          <button class="btn-login" type="submit">ورود به سامانه ←</button>
+          <button class="btn-login" type="submit" aria-label="ورود به سامانه">ورود به سامانه ←</button>
         </form>
         <div class="auth-hint">
           <b>حساب کاربری ندارید؟</b>
@@ -293,7 +297,7 @@ def render_intro(user):
           <li>هر پاسخ تشریحی باید حداقل {fa(integrity.MIN_TEXT_CHARS)} کاراکتر داشته باشد؛ تا آن حد، ارسال ممکن نیست.</li>
           <li>کپی، چسباندن و کشیدن متن در صفحهٔ آزمون غیرفعال است و تلاش‌ها ثبت می‌شوند.</li>
           <li>ورود هم‌زمان از دو دستگاه ممکن نیست؛ ورود دوم، نشست قبلی را می‌بندد.</li>
-          <li>صفحهٔ آزمون در حالت بسته‌شدن مرورگر محافظت می‌شود و خروج از صفحه ثبت می‌گردد.</li>
+          <li>خروج از صفحهٔ آزمون و تلاش برای گرفتن اسکرین‌شات ثبت می‌شود؛ اگر مرورگر بسته شود، زمان از دست نمی‌رود و با همان حساب برمی‌گردید.</li>
         </ul>
         <div class="notice">
           <b>شرط قبولی:</b> ۶۵ از ۱۰۰ و حداقل ۶ از ۱۰ در بخش محاسبهٔ ساده.
@@ -460,19 +464,19 @@ def render_exam(user, attempt, answers):
     {resume_note}
     <div class="recbar" aria-live="polite"><span class="recdot"></span> این آزمون در حال ثبت فعالیت است؛ کپی، چسباندن و گرفتن تصویر از صفحه غیرفعال است.</div>
     <div class="timerbar">
-      <div class="timer" id="timer">--:--</div>
-      <div class="progresswrap"><div class="progress" id="progress"></div></div>
-      <div class="answered" id="answeredCount">۰ از ۲۵</div>
-      <button class="btn danger" id="submitBtn">ارسال نهایی</button>
+      <div class="timer" id="timer" role="timer" aria-live="off" aria-label="زمان باقی‌ماندهٔ آزمون">--:--</div>
+      <div class="progresswrap" role="progressbar" aria-label="تعداد پاسخ‌های ثبت‌شده" aria-valuemin="0" aria-valuemax="25"><div class="progress" id="progress"></div></div>
+      <div class="answered" id="answeredCount" aria-live="polite">۰ از ۲۵ پاسخ</div>
+      <button class="btn danger" id="submitBtn" type="button" aria-label="ارسال نهایی پاسخ‌ها و پایان آزمون">ارسال نهایی</button>
     </div>
     <div class="exam-layout">
       <div class="case-pane" id="casePane">
         <div class="case-head">
           <b>کیس واژه‌بان</b>
-          <button class="btn small" id="toggleCase">بستن / بازکردن</button>
+          <button class="btn small" id="toggleCase" type="button" aria-controls="caseBody" aria-expanded="true">بستن / بازکردن</button>
         </div>
         <p class="case-lead">پیش از پاسخ دادن، این کیس را کامل بخوانید. متن کیس در تمام مدت آزمون همین‌جا در دسترس است.</p>
-        <div class="case-body">{CASE_HTML}</div>
+        <div class="case-body" id="caseBody">{CASE_HTML}</div>
         <div class="case-foot">
           <a class="btn primary" href="#qgrid">کیس را خواندم؛ رفتن به سوال‌ها ↓</a>
         </div>
@@ -918,7 +922,7 @@ def render_grader_attempt(user, conn, attempt_id):
             payload = json.loads(row["payload"]) if row else {}
             blocks.append(render_grader_question(q, payload, row, attempt_id))
 
-    health_html = render_health_card(conn, a)
+    health_html = render_health_card(conn, a) + render_wrong_card(answers)
 
     body = f"""
     <div class="card wide-card">
@@ -1006,6 +1010,67 @@ def render_health_card(conn, attempt_row):
         </table>
       </details>
     </section>"""
+
+
+def wrong_answer_note(q, payload):
+    """پاسخ غلط یک سوال بسته (چهارگزینه‌ای، تطبیق، درست/غلط) به شکل علامت کوتاه."""
+    kind = q["kind"]
+    if kind in ("single", "match_one"):
+        given = payload.get("choice")
+        return f'انتخاب «{given}» ≠ کلید «{q["correct"]}»' if given and given != q["correct"] else ""
+    if kind == "multi":
+        given = set(payload.get("choices") or [])
+        correct = set(q["correct"])
+        if not given:
+            return "بی‌پاسخ · کلید: " + "، ".join(q["correct"])
+        if given == correct:
+            return ""
+        missing = [x for x in q["correct"] if x not in given]
+        extra = [x for x in given if x not in q["correct"]]
+        parts = []
+        if missing:
+            parts.append("جاافتاده: " + "، ".join(missing))
+        if extra:
+            parts.append("اضافی: " + "، ".join(extra))
+        return " · ".join(parts)
+    if kind in ("numeric", "numeric_multi"):
+        return "پاسخ عددی نادرست" if payload else "بی‌پاسخ"
+    if kind == "tf_explain":
+        given = payload.get("tf")
+        if given is None:
+            return "بی‌پاسخ · کلید: " + ("درست" if q["correct"] else "غلط")
+        return "" if bool(given) == bool(q["correct"]) else (
+            f'تشخیص «{"درست" if given else "غلط"}» ≠ کلید «{"درست" if q["correct"] else "غلط"}»')
+    return ""
+
+
+def wrong_list(answers_by_qid):
+    """سوال‌های بسته‌ای که پاسخ غلط خورده‌اند (برای نمایش در صفحهٔ تصحیح)."""
+    out = []
+    for q in QUESTIONS:
+        if not q["auto"]:
+            continue
+        row = answers_by_qid.get(q["id"])
+        if row and (row["auto_score"] or 0) >= q["auto"]:
+            continue
+        payload = json.loads(row["payload"]) if row else {}
+        out.append({"id": q["id"], "topic": q.get("topic", ""),
+                    "given": payload.get("choice") or ("، ".join(payload.get("choices") or []) if q["kind"] == "multi" else ""),
+                    "correct": q.get("correct"), "note": wrong_answer_note(q, payload)})
+    return out
+
+
+def render_wrong_card(answers_by_qid):
+    wrong = wrong_list(answers_by_qid)
+    if not wrong:
+        return '<div class="wrongcard okcard"><h3>پاسخ‌های نادرست</h3><p>همهٔ سوال‌های بسته درست پاسخ داده شده‌اند.</p></div>'
+    items = "".join(
+        f'<li><b>{e(w["id"])}</b> <span class="muted small">({e(w["topic"])})</span> — {e(w["note"] or "پاسخ نادرست")}</li>'
+        for w in wrong)
+    tags = "، ".join(w["id"] for w in wrong)
+    return ('<div class="wrongcard"><h3>پاسخ‌های نادرست ({fa(len(wrong))})</h3>'
+            f'<p class="muted small">غلط‌ها: <b>{e(tags)}</b></p>'
+            f'<ul class="wronglist">{items}</ul></div>')
 
 
 def render_grader_question(q, payload, row, attempt_id):
@@ -1337,6 +1402,8 @@ class Handler(BaseHTTPRequestHandler):
                          "js": "application/javascript; charset=utf-8",
                          "html": "text/html; charset=utf-8",
                          "webmanifest": "application/manifest+json; charset=utf-8",
+                         "png": "image/png",
+                         "svg": "image/svg+xml",
                          "woff2": "font/woff2"}.get(ext, "application/octet-stream")
                 with open(fp, "rb") as f:
                     self.send_file(f.read(), ctype)
@@ -1488,7 +1555,7 @@ class Handler(BaseHTTPRequestHandler):
                         db.log_event(conn, attempt["id"], "relogin", "ورود از دستگاه دیگر")
                 db.log_audit(conn, row["id"], "login", "ورود موفق", client_ip(self), detect_device(self))
                 home = "/admin" if row["role"] == "admin" else ("/grader" if row["role"] == "grader" else "/exam")
-                self.redirect(home, f"vb_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=172800")
+                self.redirect(home, f"vb_session={token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=172800")
             else:
                 if username:
                     db.log_audit(conn, row["id"] if row else None, "login_failed",
