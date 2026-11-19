@@ -12,6 +12,7 @@ echo "→ اجرای تست‌ها پیش از استقرار"
 cd "$SRC"
 python3 -m unittest tests.test_exam || { echo "❌ تست واحد شکست خورد؛ استقرار متوقف شد" >&2; exit 1; }
 python3 tests/test_http.py || { echo "❌ تست HTTP شکست خورد؛ استقرار متوقف شد" >&2; exit 1; }
+python3 tests/test_responsive.py || { echo "❌ تست رسپانسیو شکست خورد؛ استقرار متوقف شد" >&2; exit 1; }
 node --check "$SRC/static/exam.js" 2>/dev/null || true
 
 echo "→ ارسال فایل‌ها به $SERVER:$APP_DIR"

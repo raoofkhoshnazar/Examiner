@@ -173,11 +173,18 @@ th{background:#faf7f2;color:#6c625a;font-weight:normal;font-size:12px}
 .good{background:#e5f2e8;color:#23603a}.mid{background:#fbf0d8;color:#7a5a11}.low{background:#fbe2e0;color:#8b2a20}
 ul{margin:6px 0 0;padding-inline-start:18px}li{margin:5px 0;font-size:13px;line-height:1.9}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.tblwrap{width:100%;overflow-x:auto}
+.tblwrap table{min-width:100%}
+body{overflow-x:clip;overflow-y:auto;overflow-wrap:break-word}
+.hero{flex-wrap:wrap}
+li,td,th,.meta{overflow-wrap:anywhere}
 .note{font-size:12px;color:#8a7f73;margin-top:20px;border-top:1px dashed #e4dbd0;padding-top:12px}
 .actions{text-align:center;margin:18px 0}
 .actions a{display:inline-block;background:#7a1f2b;color:#fff;text-decoration:none;padding:10px 20px;border-radius:10px;font-size:13px}
 @media print{body{background:#fff}.actions{display:none}.sheet{border:none;padding:0}}
-@media (max-width:640px){.two{grid-template-columns:1fr}.sheet{padding:22px 16px}}
+@media (max-width:640px){.two{grid-template-columns:1fr}.sheet{padding:20px 14px}.wrap{padding:16px 10px}
+  .hero{padding:14px}.hero .num{font-size:34px}.tblwrap table{min-width:420px}table{font-size:12.5px}th,td{padding:6px 7px}}
+@media (max-width:400px){.hero .num{font-size:30px}.sheet{padding:16px 11px}.tblwrap table{min-width:380px}}
 """
 
 
@@ -219,7 +226,7 @@ def render_report(conn, attempt, owner_name, download=False, questions=QUESTIONS
   {'' if attempt['passed'] is not None else '<p class="note">بخش‌های تشریحی هنوز کامل تصحیح نشده‌اند؛ نتیجهٔ قبولی پس از تصحیح قطعی می‌شود.</p>'}
 
   <h2>نتیجه به تفکیک بخش</h2>
-  <table><thead><tr><th>بخش</th><th>نمره</th><th>درصد</th><th>وضعیت</th></tr></thead><tbody>{sec_rows}</tbody></table>
+  <div class="tblwrap"><table><thead><tr><th>بخش</th><th>نمره</th><th>درصد</th><th>وضعیت</th></tr></thead><tbody>{sec_rows}</tbody></table></div>
 
   <div class="two">
     <div><h2>مباحثی که مسلط شده‌اید</h2><ul>{good}</ul></div>

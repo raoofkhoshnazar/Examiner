@@ -21,6 +21,10 @@ import reportcard
 from exam_data import (AUTO_POINTS, CASE_HTML, EXAM, MANUAL_POINTS, MODEL_ANSWERS, QUESTIONS,
                        QUESTIONS_BY_ID, SECTIONS, SECTION_POINTS, TOTAL_POINTS)
 
+# جدول‌های متن کیس هم داخل قاب اسکرول می‌روند تا در موبایل صفحه را پهن نکنند
+CASE_HTML = re.sub(r"<table(\s[^>]*)?>", r'<div class="table-wrap tight"><table\1>', CASE_HTML)
+CASE_HTML = CASE_HTML.replace("</table>", "</table></div>")
+
 VERSION = EXAM["version"]
 DURATION = EXAM["duration_minutes"] * 60
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -123,7 +127,7 @@ def page(title, body, user=None, extra_head="", wide=False, variant="app"):
     if user:
         role = "مدیر" if user["role"] == "admin" else ("مصحح" if user["role"] == "grader" else "شرکت‌کننده")
         if user["role"] == "participant":
-            items = [("/exam", "کارنامه"), ("/exam", "آزمون"), ("/guide", "راهنمای آزمون")]
+            items = [("/exam", "آزمون"), ("/guide", "راهنمای آزمون")]
         elif user["role"] == "grader":
             items = [("/grader", "نتایج"), ("/exam", "کارنامه")]
         else:
@@ -316,12 +320,12 @@ def render_intro(user):
         </div>
         <div class="divider"></div>
         <h3 class="subhead">ساختار بخش‌ها</h3>
-        <table class="mini-table">
+        <div class="table-wrap tight"><table class="mini-table">
           <thead><tr><th>بخش</th><th>نوع</th><th>بارم</th></tr></thead>
           <tbody>
           {''.join(f'<tr><td>{e(s["id"])}</td><td>{e(s["title"])}</td><td>{fa(s["points"])}</td></tr>' for s in SECTIONS)}
           </tbody>
-        </table>
+        </table></div>
         <p class="muted small">بارم دستی با روبریک مصحح محاسبه می‌شود.</p>
       </aside>
     </div>""", user)
@@ -375,7 +379,7 @@ def render_question(q, order, n):
                 <option value="">— انتخاب شاهد —</option>{opts}
               </select></td>
             </tr>""")
-        body = f'<table class="match-table"><thead><tr><th>مفهوم</th><th>شاهد در کیس</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
+        body = f'<div class="table-wrap tight"><table class="match-table"><thead><tr><th>مفهوم</th><th>شاهد در کیس</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
     elif kind == "numeric":
         f = q["fields"][0]
         body = f"""<label class="numfield"><span>{e(f['label'])}</span>
@@ -564,10 +568,10 @@ def render_result(user, attempt, section_scores, manual_pending):
           <span>تشریحی: {fmt(manual)} از {fa(MANUAL_POINTS)}</span>
         </div>
       </div>
-      <table class="table">
+      <div class="table-wrap md"><table class="table">
         <thead><tr><th>بخش</th><th>نمره</th><th>از</th><th>درصد</th><th>وضعیت</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
-      </table>
+      </table></div>
       <p class="muted small">معیار قبولی: {fa(65)} از {fa(100)} و حداقل {fa(6)} از {fa(10)} در بخش محاسبه.</p>
       <div class="actions">
         <a class="btn primary" href="/report/{attempt['id']}">مشاهدهٔ کارنامهٔ ارزیابی</a>
@@ -684,10 +688,10 @@ def render_grader(user, conn):
         <a class="btn primary" href="/grader/export.csv">دانلود اکسل (CSV) کامل</a>
         <a class="btn" href="/grader/export-answers.csv">دانلود پاسخ‌های خام</a>
       </div>
-      <table class="table">
+      <div class="table-wrap wide"><table class="table">
         <thead><tr><th>نام</th><th>نام کاربری</th><th>زمان ارسال</th><th>وضعیت</th><th>پاسخ</th><th>خودکار</th><th>کل</th><th>نتیجه</th><th>تشابه</th><th>سلامت</th><th></th></tr></thead>
         <tbody>{''.join(out) or '<tr><td colspan="11" class="muted">هنوز تلاشی ثبت نشده است.</td></tr>'}</tbody>
-      </table>
+      </table></div>
     </div>"""
     return page("پنل مصحح — واژه‌بان", body, user, wide=True)
 
@@ -767,7 +771,7 @@ def _live_table(items, empty_text):
             f"<td>{fa_clock(max(0, it['remaining']))}</td><td>{state}</td></tr>")
     head = ("<thead><tr><th>نام</th><th>دستگاه</th><th>پیشرفت</th>"
             "<th>زمان باقی‌مانده</th><th>وضعیت</th></tr></thead>")
-    return f'<table class="table compact">{head}<tbody>{"".join(rows)}</tbody></table>'
+    return f'<div class="table-wrap md"><table class="table compact">{head}<tbody>{"".join(rows)}</tbody></table></div>'
 
 
 def _done_table(items, empty_text, label):
@@ -779,7 +783,7 @@ def _done_table(items, empty_text, label):
         f"<td>{time.strftime('%H:%M', time.localtime(it['submitted']))}</td>"
         f"<td>{fmt(it['score'] or 0)}</td></tr>" for it in items)
     head = f"<thead><tr><th>نام</th><th>دستگاه</th><th>{e(label)}</th><th>نمره</th></tr></thead>"
-    return f'<table class="table compact">{head}<tbody>{rows}</tbody></table>'
+    return f'<div class="table-wrap md"><table class="table compact">{head}<tbody>{rows}</tbody></table></div>'
 
 
 def render_audit_rows(rows):
@@ -828,8 +832,8 @@ def render_live(user, conn):
 
       <h2>لاگ ورودها و عملیات</h2>
       <p class="muted small">۶۰ رخداد آخر: ورود، خروج، ورود ناموفق، شروع و ارسال آزمون و اقدام‌های مدیر.</p>
-      <table class="table compact"><thead><tr><th>زمان</th><th>کاربر</th><th>رخداد</th><th>جزئیات</th><th>دستگاه</th></tr></thead>
-      <tbody>{audit_rows or '<tr><td colspan="5" class="muted">هنوز رخدادی ثبت نشده است.</td></tr>'}</tbody></table>
+      <div class="table-wrap md"><table class="table compact"><thead><tr><th>زمان</th><th>کاربر</th><th>رخداد</th><th>جزئیات</th><th>دستگاه</th></tr></thead>
+      <tbody>{audit_rows or '<tr><td colspan="5" class="muted">هنوز رخدادی ثبت نشده است.</td></tr>'}</tbody></table></div>
       <p class="muted small">لاگ به‌صورت چرخشی فقط ۵۰۰۰ رخداد آخر را نگه می‌دارد.</p>
     </div>
     <script>setTimeout(function(){{ location.reload(); }}, 20000);</script>"""
@@ -893,10 +897,10 @@ def render_admin(user, conn, notice="", error=""):
       </form>
 
       <h2>کاربران</h2>
-      <table class="table">
+      <div class="table-wrap wide"><table class="table">
         <thead><tr><th>نام کاربری</th><th>نام نمایشی</th><th>نقش</th><th>وضعیت آزمون</th><th>عملیات</th></tr></thead>
         <tbody>{''.join(out)}</tbody>
-      </table>
+      </table></div>
       <div class="actions">
         <a class="btn primary" href="/admin/live">وضعیت زندهٔ آزمون</a>
         <a class="btn" href="/grader/export.csv">دانلود CSV نتایج</a>
@@ -1004,10 +1008,10 @@ def render_health_card(conn, attempt_row):
       {sim_block}
       <details class="qtimes">
         <summary>زمان‌سنجی هر سوال ({fa(len(answers))} پاسخ ثبت‌شده)</summary>
-        <table class="table compact">
+        <div class="table-wrap md"><table class="table compact">
           <thead><tr><th>سوال</th><th>زمان صرف‌شده</th><th>وضعیت</th></tr></thead>
           <tbody>{''.join(q_rows)}</tbody>
-        </table>
+        </table></div>
       </details>
     </section>"""
 

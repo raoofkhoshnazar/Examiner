@@ -125,8 +125,8 @@ body.auth main { padding: 0; max-width: none; }
 
 .auth-main {
   display: grid;
-  grid-template-columns: 620px minmax(360px, 440px);
-  gap: 96px;
+  grid-template-columns: minmax(0, 620px) minmax(0, 440px);
+  gap: clamp(24px, 4.5vw, 96px);
   align-items: center;
   justify-content: center;
   padding: 28px 64px;
@@ -317,12 +317,13 @@ body.auth main { padding: 0; max-width: none; }
 .exam-main { min-width: 0; }
 .case-pane {
   background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-lg); min-width: 0;
   position: sticky; top: 96px; max-height: calc(100vh - 112px);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .case-head {
   display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; flex-wrap: wrap;
   padding: 14px 18px; border-bottom: 1px solid var(--line);
   background: var(--brand); color: #fff; font-size: 14px;
 }
@@ -543,7 +544,7 @@ textarea { resize: vertical; }
 .score-big { font-family: "Estedad-VF", sans-serif; font-size: 54px; font-weight: 700; line-height: 1.25; }
 .score-big span { font-family: "Vazirmatn", sans-serif; font-size: 15px; font-weight: 400; color: #c2d7c9; margin-inline-start: 8px; }
 .score-verdict { font-size: 18px; font-weight: 700; }
-.score-split { margin-top: 10px; display: flex; gap: 20px; justify-content: center; font-size: 13px; color: #c2d7c9; }
+.score-split { margin-top: 10px; display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; font-size: 13px; color: #c2d7c9; }
 
 .table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 16px 0; }
 .table th, .table td { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: right; }
@@ -562,7 +563,7 @@ textarea { resize: vertical; }
 .stat span { font-size: 12px; color: var(--muted); }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0; }
 .gradertop { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
-.navactions { display: flex; gap: 8px; }
+.navactions { display: flex; gap: 8px; flex-wrap: wrap; }
 .gsec {
   font-family: "Estedad-VF", sans-serif; font-size: 16px; color: var(--brand);
   margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--tint);
@@ -600,14 +601,14 @@ form.inline input[type=text] { width: auto; }
 
 /* ------------------------------------------------- نوار باریک آزمون (لپ‌تاپ/دسکتاپ) */
 @media (min-width: 901px) {
-  body.taking-exam .topbar { padding: 8px 40px; }
+  body.taking-exam .topbar { padding: 7px 40px; }
   body.taking-exam .wordmark-text { font-size: 21px; }
   body.taking-exam .institution-mark { height: 20px; }
   body.taking-exam .navlink { font-size: 13px; }
   body.taking-exam .who, body.taking-exam .signout { font-size: 12px; }
   body.taking-exam main { padding-top: 10px; }
   body.taking-exam .timerbar {
-    top: 42px; padding: 7px 16px; gap: 12px; border-radius: 12px;
+    top: 44px; padding: 7px 16px; gap: 12px; border-radius: 12px;
     box-shadow: 0 6px 16px -14px rgba(21,63,50,.5);
   }
   body.taking-exam .timer { font-size: 19px; min-width: 74px; }
@@ -617,7 +618,7 @@ form.inline input[type=text] { width: auto; }
 }
 
 /* ---------------------------------------------------------------- mobile */
-@media (max-width: 1100px) {
+@media (max-width: 1080px) {
   /* ورود اول دیده شود؛ بخش معرفی بعد از فرم می‌آید تا اسکرول لازم نباشد */
   .auth-main {
     display: flex; flex-direction: column; gap: 18px;
@@ -728,3 +729,126 @@ form.inline input[type=text] { width: auto; }
 .wrongcard.okcard { border-color: #cfe0d4; border-inline-start-color: var(--accent); }
 .wrongcard.okcard h3 { color: var(--accent); }
 .wronglist { margin: 8px 0 0; padding-inline-start: 18px; font-size: 13px; line-height: 1.9; }
+
+/* ================================================================
+   مقاوم‌سازی چیدمان — بدون اسکرول افقی در هیچ عرضی
+   ================================================================ */
+html, body { max-width: 100%; }
+/* clip (نه hidden) تا position: sticky نوار بالای آزمون خراب نشود.
+   محور عمودی صریحاً auto است تا اسکرول عمودی هرگز قطع نشود. */
+body { overflow-x: clip; overflow-y: auto; overflow-wrap: break-word; }
+img, svg, video, canvas, iframe { max-width: 100%; height: auto; }
+.who, .navlink, .badge, .field-help { overflow-wrap: anywhere; }
+
+/* قاب اسکرول برای جدول‌های عریض: خود جدول می‌لغزد، نه کل صفحه */
+.table-wrap {
+  width: 100%; max-width: 100%; min-width: 0;
+  overflow-x: auto; overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+/* ستون‌های شبکه نباید با min-content جدول‌ها پهن شوند */
+.twocol > *, .guide-grid > * { min-width: 0; }
+.table-wrap > table { margin: 12px 0; }
+.table-wrap > table.table { min-width: 100%; }
+.table-wrap.wide > table { min-width: 880px; }
+.table-wrap.md > table { min-width: 560px; }
+.table-wrap.tight > table { min-width: 0; }
+.table-wrap td, .table-wrap th, .answerbox, .given, .fieldview { overflow-wrap: anywhere; }
+.table-wrap::-webkit-scrollbar { height: 8px; }
+.table-wrap::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 99px; }
+
+/* لپ‌تاپ کوچک: نوار آزمون کمی جمع‌وجورتر و بدون هم‌پوشانی با هدر */
+@media (max-width: 1280px) {
+  .topbar { padding: 16px 32px; }
+  main { padding: 32px 32px; }
+  .site-footer { padding: 18px 32px; }
+  .auth-header { padding: 16px 32px; }
+  .auth-footer { padding: 16px 32px; }
+  .auth-main { padding: 24px 32px; }
+}
+@media (min-width: 901px) and (max-width: 1280px) {
+  body.taking-exam .topbar { padding: 7px 24px; }
+}
+
+/* جلوگیری از زوم خودکار iOS روی فیلدهای کوچک‌تر از ۱۶ پیکسل */
+@media (max-width: 900px) {
+  input[type=text], input[type=password], textarea, select { font-size: 16px; }
+}
+
+/* تبلت افقی و پنجره‌های باریک لپ‌تاپ */
+@media (max-width: 1080px) {
+  .exam-layout { gap: 16px; }
+  .section-block { padding: 18px 20px 22px; }
+  .health-grid { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+}
+
+/* تبلت عمودی: منوی شرکت‌کننده و جدول‌های باریک */
+@media (max-width: 820px) {
+  .gradertop, .livehead { align-items: flex-start; }
+  .table-wrap.wide > table { min-width: 760px; }
+  .rubric { padding: 12px 14px; }
+}
+
+/* موبایل بزرگ */
+@media (max-width: 640px) {
+  .topbar { padding: 12px 16px; }
+  main { padding: 20px 14px; }
+  body.wide main { padding: 12px 10px; }
+  .site-footer { padding: 14px 16px; }
+  .card, .panel { padding: 16px; }
+  .page-title { font-size: 22px; }
+  .score-big { font-size: 44px; }
+  .score-hero { padding: 20px 14px; }
+  .stat-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+  .stat { padding: 10px; }
+  .stat b { font-size: 22px; }
+  .table-wrap.wide > table { min-width: 680px; }
+  .table-wrap.md > table { min-width: 480px; }
+  .timerbar { margin: 0 -10px 10px; padding: 7px 10px; gap: 8px; }
+  .timerbar .timer { font-size: 18px; min-width: 58px; }
+  .timerbar .progresswrap { min-width: 44px; }
+  .timerbar #submitBtn { padding: 6px 10px; font-size: 12px; }
+  .recbar { font-size: 11px; padding: 6px 10px; }
+  .qnav { width: 36px; height: 32px; }
+  .section-block { padding: 14px 12px 18px; }
+  .option { padding: 10px 12px; }
+  .errorpage { padding: 14px; }
+  .wrongcard, .healthcard { padding: 14px; }
+}
+
+/* جدول تطبیق در موبایل: هر ردیف یک کارت عمودی */
+@media (max-width: 560px) {
+  .match-table thead { display: none; }
+  .match-table, .match-table tbody, .match-table tr, .match-table td { display: block; width: 100%; }
+  .match-table tr { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; padding: 4px 2px; background: var(--surface-soft); }
+  .match-table td { border: none; padding: 6px 12px; }
+  .match-table .match-left { width: 100%; font-weight: 700; color: var(--ink-2); }
+  .match-table td:last-child { padding-bottom: 10px; }
+}
+
+/* موبایل کوچک */
+@media (max-width: 400px) {
+  .wordmark-text { font-size: 21px; }
+  .auth-hero { font-size: 22px; }
+  .fact b { font-size: 18px; }
+  .exam-facts { gap: 10px; }
+  .timer { min-width: 54px !important; font-size: 17px !important; }
+  .answered { font-size: 11px; }
+  .timerbar #submitBtn { padding: 6px 8px; font-size: 11.5px; }
+  .qnav { width: 33px; height: 30px; }
+  .table-wrap.wide > table { min-width: 620px; }
+  .table-wrap.md > table { min-width: 440px; }
+  .errorpage .error-code { font-size: 42px; }
+  .score-big { font-size: 38px; }
+}
+
+/* دو ستون وضعیت زنده/نتایج در تبلت عمودی تک‌ستونه می‌شود */
+@media (max-width: 820px) {
+  .twocol { grid-template-columns: 1fr; gap: 8px; }
+}
+/* جدول‌های متن کیس در موبایل داخل قاب خودشان می‌لغزند، نه صفحه */
+@media (max-width: 900px) {
+  .case-body .table-wrap > table { min-width: 500px; }
+  /* هم‌وزن با قاعدهٔ .case-pane .case-body در بالا؛ اینجا دیرتر آمده و برنده است */
+  .case-pane .case-body { overflow-x: auto; }
+}
