@@ -1788,10 +1788,21 @@ def sweeper(stop, interval=20):
             sys.stderr.write(f"auto-submit sweep failed: {exc}\n")
 
 
+class ExamHTTPServer(ThreadingHTTPServer):
+    """سرور آزمون برای نقطهٔ شروع انبوه.
+
+    صف اتصال پیش‌فرض پایتون ۵ است؛ وقتی ده‌ها نفر هم‌زمان (اول جلسهٔ آزمون)
+    صفحه را باز می‌کنند، اتصال‌های اضافه رد می‌شوند و مرورگر پیام «اتصال برقرار
+    نشد» می‌دهد. صف بزرگ‌تر همان انفجار را بی‌صدا در صف نگه می‌دارد.
+    """
+    request_queue_size = 128
+    daemon_threads = True          # اتصال نیمه‌باز، خاموشی سرویس را قفل نکند
+
+
 def main():
     port = int(os.environ.get("PORT", "8090"))
     db.init_db()
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    httpd = ExamHTTPServer(("127.0.0.1", port), Handler)
     sys.stderr.write(f"vazheban exam listening on 127.0.0.1:{port}\n")
     stop = threading.Event()
     threading.Thread(target=sweeper, args=(stop,), daemon=True).start()
