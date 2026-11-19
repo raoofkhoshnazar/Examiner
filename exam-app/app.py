@@ -161,7 +161,7 @@ def page(title, body, user=None, extra_head="", wide=False, variant="app"):
 <link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 <link rel="manifest" href="/static/manifest.webmanifest">
-<meta name="theme-color" content="#153f32">
+<meta name="theme-color" content="#2e2a2a">
 <script src="/static/register-sw.js" defer></script>
 {extra_head}
 </head>

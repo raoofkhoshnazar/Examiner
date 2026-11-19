@@ -1,7 +1,7 @@
 /* Service Worker واژه‌بان — ذخیرهٔ آفلاین پوستهٔ برنامه
    فقط فایل‌های ثابت و صفحهٔ آفلاین کش می‌شوند؛ پاسخ‌های API و صفحه‌های آزمون
    هیچ‌وقت کش نمی‌شوند تا دادهٔ کهنه یا کلید پاسخ جابه‌جا نشود. */
-const VERSION = 'vb-v6';
+const VERSION = 'vb-v7';
 const STATIC_CACHE = VERSION + '-static';
 const SHELL = ['/static/style.css', '/static/exam.js', '/static/offline.html',
   '/static/favicon.svg', '/static/icons/icon-192.png'];

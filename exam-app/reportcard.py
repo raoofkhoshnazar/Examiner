@@ -155,22 +155,22 @@ def build_report(conn, attempt, questions=QUESTIONS, sections=SECTIONS):
 
 
 REPORT_CSS = """
-body{margin:0;background:#f6f2ec;color:#2b2520;font-family:Tahoma,'Vazirmatn',sans-serif;direction:rtl}
+body{margin:0;background:#f5f7f8;color:#23282f;font-family:Tahoma,'Vazirmatn',sans-serif;direction:rtl}
 .wrap{max-width:820px;margin:0 auto;padding:32px 20px}
-.sheet{background:#fff;border:1px solid #e4dbd0;border-radius:14px;padding:34px 30px}
-.brand{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #7a1f2b;padding-bottom:12px;margin-bottom:22px}
-.brand b{font-size:22px;color:#7a1f2b}.brand span{font-size:12px;color:#8a7f73}
-h1{font-size:24px;margin:0 0 4px}h2{font-size:16px;margin:26px 0 10px;color:#7a1f2b}
-.meta{color:#7a7069;font-size:12.5px;margin-bottom:18px}
-.hero{display:flex;gap:22px;align-items:center;background:#faf7f2;border:1px solid #eee3d7;border-radius:12px;padding:18px 20px}
-.hero .num{font-size:40px;font-weight:bold;color:#7a1f2b;line-height:1}
-.hero .num small{font-size:13px;color:#8a7f73;font-weight:normal}
+.sheet{background:#fff;border:1px solid #e3e7ec;border-radius:14px;padding:34px 30px}
+.brand{display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid #dc4c46;padding-bottom:12px;margin-bottom:22px}
+.brand b{font-size:22px;color:#dc4c46}.brand span{font-size:12px;color:#73859f}
+h1{font-size:24px;margin:0 0 4px}h2{font-size:16px;margin:26px 0 10px;color:#dc4c46}
+.meta{color:#73859f;font-size:12.5px;margin-bottom:18px}
+.hero{display:flex;gap:22px;align-items:center;background:#f7f9fa;border:1px solid #e3e7ec;border-radius:12px;padding:18px 20px}
+.hero .num{font-size:40px;font-weight:bold;color:#dc4c46;line-height:1}
+.hero .num small{font-size:13px;color:#73859f;font-weight:normal}
 .hero .v{font-size:15px}
 table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
-th,td{padding:7px 9px;border-bottom:1px solid #efe7dd;text-align:right}
-th{background:#faf7f2;color:#6c625a;font-weight:normal;font-size:12px}
+th,td{padding:7px 9px;border-bottom:1px solid #e8ecf0;text-align:right}
+th{background:#f7f9fa;color:#73859f;font-weight:normal;font-size:12px}
 .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px}
-.good{background:#e5f2e8;color:#23603a}.mid{background:#fbf0d8;color:#7a5a11}.low{background:#fbe2e0;color:#8b2a20}
+.good{background:#e9f3ee;color:#1f6b57}.mid{background:#fdf4e3;color:#8a5a12}.low{background:#fdeceb;color:#c0392b}
 ul{margin:6px 0 0;padding-inline-start:18px}li{margin:5px 0;font-size:13px;line-height:1.9}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .tblwrap{width:100%;overflow-x:auto}
@@ -178,9 +178,9 @@ ul{margin:6px 0 0;padding-inline-start:18px}li{margin:5px 0;font-size:13px;line-
 body{overflow-x:clip;overflow-y:auto;overflow-wrap:break-word}
 .hero{flex-wrap:wrap}
 li,td,th,.meta{overflow-wrap:anywhere}
-.note{font-size:12px;color:#8a7f73;margin-top:20px;border-top:1px dashed #e4dbd0;padding-top:12px}
+.note{font-size:12px;color:#73859f;margin-top:20px;border-top:1px dashed #e3e7ec;padding-top:12px}
 .actions{text-align:center;margin:18px 0}
-.actions a{display:inline-block;background:#7a1f2b;color:#fff;text-decoration:none;padding:10px 20px;border-radius:10px;font-size:13px}
+.actions a{display:inline-block;background:#dc4c46;color:#fff;text-decoration:none;padding:10px 20px;border-radius:10px;font-size:13px}
 @media print{body{background:#fff}.actions{display:none}.sheet{border:none;padding:0}}
 @media (max-width:640px){.two{grid-template-columns:1fr}.sheet{padding:20px 14px}.wrap{padding:16px 10px}
   .hero{padding:14px}.hero .num{font-size:34px}.tblwrap table{min-width:420px}table{font-size:12.5px}th,td{padding:6px 7px}}
@@ -221,7 +221,7 @@ def render_report(conn, attempt, owner_name, download=False, questions=QUESTIONS
   <div class="hero">
     <div class="num">{fmt(total)}<small> از ۱۰۰</small></div>
     <div class="v"><b>{e(verdict)}</b><br>
-      <span style="color:#8a7f73;font-size:12.5px">خودکار {fmt(attempt['auto_score'] or 0)} · تشریحی {fmt(attempt['manual_score'] or 0)}</span></div>
+      <span style="color:#73859f;font-size:12.5px">خودکار {fmt(attempt['auto_score'] or 0)} · تشریحی {fmt(attempt['manual_score'] or 0)}</span></div>
   </div>
   {'' if attempt['passed'] is not None else '<p class="note">بخش‌های تشریحی هنوز کامل تصحیح نشده‌اند؛ نتیجهٔ قبولی پس از تصحیح قطعی می‌شود.</p>'}
 

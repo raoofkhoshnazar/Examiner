@@ -226,10 +226,78 @@ class TestResponsive(unittest.TestCase):
             self.assertIn(f"max-width: {width}px", CSS, f"نقطهٔ شکست {width}px")
         self.assertIn("min-width: 901px", CSS)
 
+    def test_04b_auth_has_side_padding_at_every_breakpoint(self):
+        """صفحهٔ اول باید در موبایل هم حاشیهٔ کناری داشته باشد.
+
+        قاعدهٔ `body.auth main { padding: 0 }` اولویت بالاتری از `.auth-main` داشت و
+        پدینگ را در همهٔ عرض‌ها صفر می‌کرد؛ این تست جلوی برگشتش را می‌گیرد.
+        """
+        body_main = re.findall(r"body\.auth main\s*\{([^}]*)\}", CSS)
+        self.assertTrue(body_main)
+        for rule in body_main:
+            self.assertNotRegex(rule, r"padding:\s*0(?:\s|;|$)",
+                                "padding: 0 روی body.auth main حاشیهٔ ورود را صفر می‌کند")
+
+        blocks = re.findall(r"\.auth-main\s*\{([^}]*)\}", CSS)
+        self.assertGreaterEqual(len(blocks), 3)
+        for rule in blocks:
+            m = re.search(r"padding:\s*([^;]+);", rule)
+            if not m:
+                continue
+            parts = m.group(1).split()
+            sides = parts[1] if len(parts) >= 2 else parts[0]
+            if sides.startswith("0") and len(parts) < 4:
+                continue                      # padding: 0 (بدون حاشیهٔ افقی) پذیرفته نیست
+            if sides == "0" and len(parts) >= 4:
+                self.fail(f"حاشیهٔ افقی صفر در .auth-main: {m.group(1)}")
+            if re.fullmatch(r"\d+px", sides):
+                self.assertGreaterEqual(int(sides[:-2]), 16,
+                                        f"حاشیهٔ کناری ورود کمتر از ۱۶px: {sides}")
+
+    def test_04c_mobile_side_padding_is_generous(self):
+        """در موبایل، صفحه‌های داخلی و نوار چسبیده فاصلهٔ کناری کافی دارند."""
+        mobile = CSS[CSS.index("@media (max-width: 640px)"):]
+        main_rule = re.search(r"\n  main \{ padding: (\d+)px (\d+)px", mobile)
+        self.assertIsNotNone(main_rule, "قاعدهٔ پدینگ main در موبایل")
+        self.assertGreaterEqual(int(main_rule.group(2)), 16,
+                                "پدینگ کناری صفحه در موبایل کمتر از ۱۶px")
+        timer = re.search(r"\.timerbar \{[^}]*padding: \d+px (\d+)px", mobile)
+        self.assertIsNotNone(timer, "پدینگ نوار تایمر در موبایل")
+        self.assertGreaterEqual(int(timer.group(1)), 16,
+                                "نوار چسبیده باید پدینگ کناری ۱۶px یا بیشتر داشته باشد")
+
     def test_05b_no_ios_input_zoom(self):
         """فیلدهای فرم در موبایل ۱۶ پیکسل‌اند تا iOS زوم نکند."""
         block = re.search(r"@media \(max-width: 900px\) \{[^@]*font-size: 16px", CSS)
         self.assertIsNotNone(block)
+
+    def test_05c_palette_contrast_is_accessible(self):
+        """رنگ‌های پالت باید متن را خوانا نگه دارند (WCAG AA برای متن معمولی)."""
+        def lum(hex_color):
+            h = hex_color.lstrip("#")
+            rgb = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+            f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+            return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2])
+
+        def ratio(a, b):
+            hi, lo = sorted([lum(a), lum(b)], reverse=True)
+            return (hi + 0.05) / (lo + 0.05)
+
+        root = re.search(r":root\s*\{([^}]*)\}", CSS).group(1)
+        var = lambda name: re.search(rf"--{name}:\s*(#[0-9a-fA-F]{{6}})", root).group(1)
+
+        checks = [
+            ("متن اصلی روی پس‌زمینه", var("ink"), var("bg")),
+            ("متن اصلی روی سطح", var("ink"), var("surface")),
+            ("متن کم‌رنگ روی سطح", var("muted"), var("surface")),
+            ("متن کم‌رنگ روی tint", var("muted"), var("tint")),
+            ("سفید روی دکمهٔ اصلی", "#ffffff", var("accent")),
+            ("سفید روی برند تیره", "#ffffff", var("brand")),
+            ("متن کم‌رنگ روی برند", var("cream"), var("brand")),
+        ]
+        for name, fg, bg in checks:
+            self.assertGreaterEqual(round(ratio(fg, bg), 2), 4.5,
+                                    f"تضاد کم: {name} ({fg} روی {bg})")
 
     def test_06_match_table_stacks_on_phones(self):
         self.assertRegex(CSS, r"@media \(max-width: 560px\)[^@]*\.match-table thead\s*\{\s*display:\s*none")
