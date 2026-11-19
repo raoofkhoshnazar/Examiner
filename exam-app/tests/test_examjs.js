@@ -7,6 +7,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const RealDate = Date;
 
 const SRC = path.join(__dirname, "..", "static", "exam.js");
 
@@ -34,7 +35,9 @@ function makeEl(overrides = {}) {
     remove() {},
     setAttribute(k, v) { this[k] = v; },
     getAttribute(k) { return this[k]; },
-    addEventListener() {},
+    _l: {},
+    addEventListener(type, fn) { (this._l[type] = this._l[type] || []).push(fn); },
+    fire(type, ev) { (this._l[type] || []).forEach((fn) => fn(ev || {})); },
     querySelector() { return null; },
     querySelectorAll() { return []; },
     closest() { return null; },
@@ -44,8 +47,9 @@ function makeEl(overrides = {}) {
   return el;
 }
 
-function run({ withQuestions = true } = {}) {
+function run({ withQuestions = true, failSubmit = false } = {}) {
   const errors = [];
+  const clock = { now: 1_700_000_000_000 };     // ساعت قابل کنترل برای تست تایمر
   const timer = makeEl({ id: "timer" });
   const answered = makeEl({ id: "answeredCount" });
   const progress = makeEl({ id: "progress" });
@@ -55,6 +59,8 @@ function run({ withQuestions = true } = {}) {
   field.value = "";
   const panel = makeEl({ dataset: { qid: "C1" } });
   const byId = { timer, answeredCount: answered, progress };
+  const els = {};            // عنصرهای ثابت هر شناسه تا شنونده‌ها گم نشوند
+  const el = (id) => (byId[id] = byId[id] || (els[id] = makeEl({ id })));
 
   const found = (sel) => {
     if (!withQuestions) return null;
@@ -66,7 +72,7 @@ function run({ withQuestions = true } = {}) {
   const listeners = [];        // (type, handler) برای شبیه‌سازی رخدادها
   const calls = [];            // درخواست‌های fetch برای بررسی محتوای ذخیره‌شده
   const document = {
-    getElementById: (id) => byId[id] || makeEl({ id }),
+    getElementById: (id) => el(id),
     querySelector: found,
     querySelectorAll: (sel) => (sel === "[data-qid]" && withQuestions ? [field] : []),
     createElement: () => makeEl(),
@@ -84,6 +90,9 @@ function run({ withQuestions = true } = {}) {
     localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     fetch: (url, opts) => {
       calls.push({ url, body: opts && opts.body ? String(opts.body) : "" });
+      if (failSubmit && String(url).indexOf("/api/submit") >= 0) {
+        return Promise.reject(new Error("شبکه قطع است"));
+      }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ active: true, remaining: 3600 }) });
     },
     navigator: { clipboard: undefined, sendBeacon: undefined },
@@ -103,7 +112,9 @@ function run({ withQuestions = true } = {}) {
     Array,
     String,
     JSON,
-    Date,
+    Date: Object.assign(function () { return new RealDate(); }, {
+      now: () => clock.now,
+    }),
     isFinite,
     Intl,
   };
@@ -122,7 +133,9 @@ function run({ withQuestions = true } = {}) {
 
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(SRC, "utf-8"), sandbox, { filename: "exam.js" });
-  return { sandbox, errors, timer, answered, progress, timers, listeners, calls, field };
+  const tickFn = timers.intervals.find(([, ms]) => ms === 1000)?.[0];
+  return { sandbox, errors, timer, answered, progress, timers, listeners, calls, field,
+           clock, tick: tickFn, el, location: sandbox.location, modal: el("modalBack") };
 }
 
 /* یک رخداد را مثل مرورگر به شنونده‌های ثبت‌شده می‌رساند */
@@ -156,7 +169,7 @@ function check(name, cond, detail = "") {
   const t = r.timer.textContent;
   const valid = /^[۰-۹]{2}:[۰-۹]{2}$/.test(t);
   check("تایمر مقدار زمان نشان می‌دهد (نه --:--)", valid, JSON.stringify(t));
-  check("تایمر روی عدد معقول است", valid && t.startsWith("۵۹"), t);
+  check("تایمر در شروع عدد معقول (۵۹ یا ۶۰ دقیقه) است", valid && (t.startsWith("۵۹") || t === "۶۰:۰۰"), t);
 
   check("نوار پیشرفت به‌روز شده است", r.answered.textContent.includes("از"),
         JSON.stringify(r.answered.textContent));
@@ -176,6 +189,32 @@ function check(name, cond, detail = "") {
         /^[۰-۹]{2}:[۰-۹]{2}$/.test(r.timer.textContent), JSON.stringify(r.timer.textContent));
 }
 
+// ---------------------------------------------------------------- تایمر تابع زمان واقعی
+{
+  const r = run();
+  check("تایمر با ساعت دیوار محاسبه می‌شود (نه شمارش حلقه)",
+        fs.readFileSync(SRC, "utf-8").includes("endAt - Date.now()"));
+
+  // مرورگر در پس‌زمینه حلقه را متوقف کرده: ساعت ۹۰ ثانیه جلو می‌رود
+  // و فقط یک بار tick اجرا می‌شود؛ باید همان ۹۰ ثانیه کسر شده باشد.
+  r.clock.now += 90_000;
+  r.tick();
+  check("با توقف حلقه در پس‌زمینه، تایمر عقب نمی‌ماند",
+        r.timer.textContent === "۵۸:۳۰", r.timer.textContent);
+
+  // چند دقیقه بعد، باز هم یک tick
+  r.clock.now += 300_000;
+  r.tick();
+  check("پس از ۵ دقیقهٔ دیگر، عدد دقیقاً همان زمان را نشان می‌دهد",
+        r.timer.textContent === "۵۳:۳۰", r.timer.textContent);
+
+  // پایان وقت: عدد صفر می‌شود و به منفی نمی‌رود
+  r.clock.now += 3_600_000;
+  r.tick();
+  check("در پایان وقت، تایمر صفر می‌شود و منفی نمی‌شود",
+        r.timer.textContent === "۰۰:۰۰", r.timer.textContent);
+}
+
 // ---------------------------------------------------------------- مهلت نامعتبر
 {
   const r = run();
@@ -184,11 +223,10 @@ function check(name, cond, detail = "") {
   check("منبع تایمر از عدد متناهی محافظت می‌کند", src.includes("Number.isFinite(lastTick)"));
 }
 
-// ---------------------------------------------------------------- پاسخ‌ها گم نشوند
 (async () => {
-  const r = run();
+  let r = run();
 
-  // تایپ در یک سوال تشریحی، بدون خروج از فیلد
+
   const ta1 = makeEl({ tagName: "TEXTAREA", dataset: { qid: "C1", field: "explain" } });
   ta1.value = "پاسخ تشریحی سوال اول";
   fire(r, "input", ta1);
@@ -226,14 +264,81 @@ function check(name, cond, detail = "") {
         JSON.stringify(saved));
 
   const callsBefore = posts().length;
-  const legacy = makeEl({ tagName: "INPUT", type: "radio", name: "answer", value: "الف",
-                          dataset: { qid: "A9" } });
-  fire(r, "change", legacy);
+
+  // رادیوی «نتیجه‌گیری» (data-field دارد) نباید به‌جای گزینهٔ چهارگزینه‌ای ثبت شود
+  const concl = makeEl({ tagName: "INPUT", type: "radio", name: "c_E1", value: "x",
+                         dataset: { qid: "E1", field: "conclusion" } });
+  fire(r, "change", concl);
   await flushTimers(r);
-  check("گروه عمومی و بی‌مالک «answer» دیگر پاسخ ثبت نمی‌کند",
-        posts().length === callsBefore, `تعداد درخواست‌ها: ${posts().length}`);
+  check("رادیوی نتیجه‌گیری به‌جای گزینهٔ سوال ثبت نمی‌شود",
+        posts().slice(callsBefore).every((b) => !(b.qid === "E1" && b.payload.choice === "x")),
+        JSON.stringify(posts().slice(callsBefore)));
+
+  // چک‌باکس ادعا نباید مثل گزینهٔ چندانتخابی خوانده شود
+  const claim = makeEl({ tagName: "INPUT", type: "checkbox", name: "claim",
+                         value: "2", dataset: { qid: "I1" } });
+  claim.classList.add("claimchk");
+  claim.closest = () => null;
+  const beforeClaim = posts().length;
+  fire(r, "change", claim);
+  await flushTimers(r);
+  check("چک‌باکس ادعا با گزینهٔ چندانتخابی اشتباه نمی‌شود",
+        posts().slice(beforeClaim).every((b) => !(b.qid === "I1" && b.payload.choices)),
+        JSON.stringify(posts().slice(beforeClaim)));
 
   check("بدون خطای زمان اجرا در مسیر ذخیره", r.errors.length === 0, r.errors.join(" | "));
+
+
+
+  // ۱) قطع اینترنت: نباید صفحه ترک شود و نباید پیام موفقیت داده شود
+  r = run({ failSubmit: true });
+  r.location.href = "";
+  const modalConfirm = r.el("modalConfirm");
+  const modalText = r.el("modalText");
+  check("دکمهٔ ارسال به شنونده وصل شده است", (modalConfirm._l.click || []).length > 0);
+
+  modalConfirm.fire("click");
+  // انتظار برای سه تلاش با تأخیر ۸۰۰ و ۱۶۰۰ میلی‌ثانیه
+  for (let i = 0; i < 40; i++) {
+    await new Promise((res) => setImmediate(res));
+    if (r.timers.timeouts.length) {
+      const fns = r.timers.timeouts.splice(0, r.timers.timeouts.length);
+      fns.forEach((fn) => fn());
+    }
+  }
+  await new Promise((res) => setImmediate(res));
+
+  check("با قطع اینترنت، صفحهٔ آزمون ترک نمی‌شود", r.location.href === "", JSON.stringify(r.location.href));
+  check("پیام «ارسال انجام نشد» به کاربر نشان داده می‌شود",
+        String(modalText.innerHTML).includes("ارسال انجام نشد"), String(modalText.innerHTML).slice(0, 80));
+  const submits = r.calls.filter((c) => c.url === "/api/submit").length;
+  check("ارسال نهایی چند بار تلاش می‌شود (بیش از یک بار)", submits > 1, `تلاش: ${submits}`);
+  check("دکمهٔ ارسال پس از شکست دوباره فعال می‌شود", modalConfirm.disabled === false);
+  check("بدون خطای زمان اجرا در مسیر ارسال ناموفق", r.errors.length === 0, r.errors.join(" | "));
+
+  // ۲) ارسال موفق: پاسخ‌های ذخیره‌نشده پیش از ارسال فرستاده می‌شوند
+  const ok = run();
+  ok.location.href = "";
+  const ta = makeEl({ tagName: "TEXTAREA", dataset: { qid: "F1", field: "text" } });
+  ta.value = "متن تازه‌ای که هنوز ذخیره نشده بود";
+  fire(ok, "input", ta);
+
+  ok.el("modalConfirm").fire("click");
+  for (let i = 0; i < 40; i++) {
+    await new Promise((res) => setImmediate(res));
+    if (ok.timers.timeouts.length) {
+      const fns = ok.timers.timeouts.splice(0, ok.timers.timeouts.length);
+      fns.forEach((fn) => fn());
+    }
+  }
+  await new Promise((res) => setImmediate(res));
+
+  const savedFirst = ok.calls.findIndex((c) => c.url === "/api/answer" &&
+    JSON.parse(c.body).qid === "F1");
+  const submitAt = ok.calls.findIndex((c) => c.url === "/api/submit");
+  check("پاسخ تازه‌تایپ‌شده پیش از ارسال نهایی ذخیره می‌شود",
+        savedFirst >= 0 && submitAt > savedFirst, `ذخیره: ${savedFirst}، ارسال: ${submitAt}`);
+  check("پس از ارسال موفق به صفحهٔ نتیجه می‌رود", ok.location.href === "/exam", ok.location.href);
 
   console.log(failed ? `\n${failed} تست شکست خورد` : "\nهمهٔ تست‌های exam.js گذشت");
   process.exit(failed ? 1 : 0);

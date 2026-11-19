@@ -9,13 +9,15 @@
   const answers = {};
   const timers = {};
   let submitted = false;
+  let submitting = false;      // درخواست ارسال نهایی در جریان است
   let lastTick = Math.round((S.deadline - S.serverNow));
 
-  /* نام گروه گزینه‌ها مخصوص هر سوال است (answer_A1، answer_multi_B1).
-     تطبیق دقیق با «answer» باعث می‌شد گزینه‌های یک سوال در سوال دیگر هم
-     انتخاب‌شده به‌نظر برسند یا انتخاب قبلی پاک شود. */
-  const isChoiceGroup = (el) => (el.name || "").indexOf("answer_") === 0 && !isMultiGroup(el);
-  const isMultiGroup = (el) => (el.name || "").indexOf("answer_multi") === 0;
+  /* گزینه‌ها بر اساس جایگاهشان در فرم شناسایی می‌شوند، نه نام گروه:
+     رادیوی سوال «data-qid» دارد و فیلد نتیجه‌گیری ندارد؛ چک‌باکس‌های ادعا
+     کلاس claimchk دارند. این کار مستقل از نام‌گذاری و از لایهٔ سازگاری
+     صفحه است. */
+  const isMultiGroup = (el) => el.type === "checkbox" && !el.classList.contains("claimchk");
+  const isChoiceGroup = (el) => el.type === "radio" && !el.dataset.field;
 
   // ------------------------------- state bootstrap
   (S.saved || {}) && Object.keys(S.saved).forEach((qid) => { answers[qid] = S.saved[qid] || {}; });
@@ -250,11 +252,11 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ qid, payload: answers[qid] || {} }),
       });
-      if (res.ok) {
-        unsaved.delete(qid);
-        const data = await res.json();
-        if (typeof data.remaining === "number") lastTick = data.remaining;
-      } else {
+        if (res.ok) {
+          unsaved.delete(qid);
+          const data = await res.json();
+          if (typeof data.remaining === "number") setRemaining(data.remaining);
+        } else {
         unsaved.add(qid);
       }
     } catch (err) {
@@ -312,6 +314,7 @@
         save(qid);
       } else if (el.type === "checkbox" && isMultiGroup(el)) {
         const box = el.closest(".options");
+        if (!box) return;
         const vals = Array.from(box.querySelectorAll(`input[value]`)).filter((x) => x.checked).map((x) => x.value);
         setAnswer(qid, "choices", vals);
         save(qid);
@@ -405,25 +408,63 @@
         : "همهٔ سوال‌ها پاسخ دارند. پس از ارسال، امکان تغییر پاسخ‌ها وجود ندارد. آیا مطمئنید؟";
       modal.classList.add("show");
     });
-    document.getElementById("modalCancel").addEventListener("click", () => modal.classList.remove("show"));
+    document.getElementById("modalCancel").addEventListener("click", () => {
+      if (submitting) return;
+      modal.classList.remove("show");
+    });
     document.getElementById("modalConfirm").addEventListener("click", async () => {
+      if (submitting) return;                     // دوبار زدن، دو ارسال نمی‌سازد
+      submitting = true;
+      const btn = document.getElementById("modalConfirm");
+      const label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "در حال ارسال…";
+      const finish = () => {
+        submitting = false;
+        btn.disabled = false;
+        btn.textContent = label;
+      };
+
       // پاسخ‌های تازه‌تایپ‌شده باید پیش از بسته‌شدن آزمون روی سرور بنشینند
       try { await Promise.all(S.qids.map((qid) => save(qid))); } catch (err) {}
-      try {
-        const res = await fetch("/api/submit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        });
-        if (!res.ok) {
+
+      let ok = false;
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        try {
+          const res = await fetch("/api/submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+            cache: "no-store",
+          });
+          if (res.ok) {
+            ok = true;
+            break;
+          }
           const data = await res.json().catch(() => ({}));
           if (data.error === "short_answers") {
             modal.classList.remove("show");
             flash(`هر پاسخ تشریحی باید حداقل ${fa(MIN_CHARS)} کاراکتر باشد.`);
+            finish();
             return;
           }
+          // خطای دیگر سرور (مثلاً مهلت تمام‌شده): یک بار دیگر تلاش کن
+        } catch (err) {
+          /* قطعی شبکه یا سرورِ در حال راه‌اندازی؛ دوباره تلاش می‌شود */
         }
-      } catch (err) { /* خطای شبکه؛ سرور با مهلت خودش ارسال می‌کند */ }
+        await new Promise((res) => setTimeout(res, 800 * (attempt + 1)));
+      }
+
+      if (!ok) {
+        // بدون تأیید سرور، صفحه را ترک نمی‌کنیم تا کاربر خیال نکند ارسال شده است
+        finish();
+        document.getElementById("modalText").innerHTML =
+          "ارسال انجام نشد؛ اتصال اینترنت برقرار نیست. پاسخ‌های شما روی همین دستگاه و " +
+          "سرور محفوظ‌اند.<br><br>اینترنت را بررسی کنید و دوباره «بله، ارسال کن» را بزنید. " +
+          "اگر ارسال نشد، سرور در پایان زمان خودش آزمون را می‌بندد.";
+        return;
+      }
+
       submitted = true;
       try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
       window.location.href = "/exam";
@@ -442,10 +483,37 @@
       }
     });
 
+    /* بستن/رفتن از صفحه: هر پاسخ ذخیره‌نشده با sendBeacon فرستاده می‌شود.
+       درخواست معمولی هنگام بسته‌شدن صفحه لغو می‌شود؛ beacon تا آخرین لحظه
+       می‌رود و پاسخ تازه‌تایپ‌شده از دست نمی‌رود. */
+    function flushBeacon() {
+      if (submitted || !S.qids) return;
+      // هر پاسخی که روی این دستگاه هست فرستاده می‌شود؛ نسخهٔ محلی همیشه
+      // تازه‌ترین چیزی است که کاربر نوشته و ممکن است هنوز ذخیره نشده باشد
+      S.qids.forEach((qid) => {
+        if (!answers[qid] || !Object.keys(answers[qid]).length) return;
+        try {
+          const body = JSON.stringify({ qid, payload: answers[qid] || {} });
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon("/api/answer", new Blob([body], { type: "application/json" }));
+          } else {
+            fetch("/api/answer", { method: "POST", headers: { "Content-Type": "application/json" },
+                                   body, keepalive: true });
+          }
+          unsaved.delete(qid);
+        } catch (err) { /* اگر نشد، پیش‌نویس مرورگر و ارسال دوره‌ای می‌مانند */ }
+      });
+    }
+
     // ثبت خروج از صفحهٔ آزمون
     document.addEventListener("visibilitychange", () => {
       if (document.hidden && !submitted) report("blur", "hidden");
+      // برگشت به صفحه: ساعت را فوراً با سرور هم‌سو کن (مرورگر در پس‌زمینه تایمر را کند می‌کند)
+      if (!document.hidden && !submitted) syncTime();
+      if (document.hidden) flushBeacon();
     });
+    window.addEventListener("pagehide", flushBeacon);
+    window.addEventListener("pagehide", () => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(answers)); } catch (e) {} });
     window.addEventListener("blur", () => { if (!submitted) report("blur", "window"); });
 
     // تلاش برای اسکرین‌شات (فقط در مرورگرهایی که پشتیبانی می‌کنند)
@@ -481,37 +549,57 @@
   }
 
   // ------------------------------- timer (server-authoritative)
+  /* مهلت به یک لحظهٔ واقعی (endAt) گره می‌خورد، نه به تعداد بار اجرای تایمر.
+     مرورگر در پس‌زمینه (یا گوشی با صفحهٔ خاموش) حلقهٔ یک‌ثانیه‌ای را کند یا
+     متوقف می‌کند؛ با «هر بار یکی کم کن» ساعت عقب می‌ماند و زمان بیشتری از
+     واقعیت نشان می‌دهد، در حالی که سرور آزمون را سر وقت می‌بندد. */
+  let endAt = Number.isFinite(lastTick) ? Date.now() + lastTick * 1000 : NaN;
+  const warned = {};
+
+  function setRemaining(sec) {
+    lastTick = sec;
+    endAt = Date.now() + sec * 1000;
+  }
+
+  function remainingNow() {
+    // رو به پایین: هرگز زمانی بیشتر از واقعیت نشان داده نشود
+    return Math.max(0, Math.floor((endAt - Date.now()) / 1000));
+  }
+
   function tick() {
     const el = document.getElementById("timer");
     // اگر مهلت از سرور نیامده باشد، به‌جای NaN از سرور زمان بگیر
-    if (!Number.isFinite(lastTick)) {
+    if (!Number.isFinite(endAt)) {
       if (!tick.resyncing) {
         tick.resyncing = true;
         syncTime().finally(() => { tick.resyncing = false; });
       }
       return;
     }
-    lastTick -= 1;
+    lastTick = remainingNow();
     if (!el) return;
-    const m = Math.max(0, Math.floor(lastTick / 60));
-    const s = Math.max(0, lastTick % 60);
+    const m = Math.floor(lastTick / 60);
+    const s = lastTick % 60;
     el.textContent = `${fa(String(m).padStart(2, "0"))}:${fa(String(s).padStart(2, "0"))}`;
     el.classList.toggle("low", lastTick <= 300);
-    if (lastTick === 900) flash("۱۵ دقیقه باقی مانده است.");
-    if (lastTick === 300) flash("۵ دقیقه باقی مانده است.");
+    // آستانه‌ای، نه تساوی دقیق: با تایمرِ کندشده ممکن است عدد ۹۰۰ رد شود
+    if (lastTick <= 900 && !warned.quarter) { warned.quarter = true; flash("۱۵ دقیقه باقی مانده است."); }
+    if (lastTick <= 300 && !warned.five) { warned.five = true; flash("۵ دقیقه باقی مانده است."); }
     if (lastTick <= 0 && !submitted) {
       submitted = true;
       timeOver();
     }
   }
 
-  // پایان زمان: سرور خودش آزمون را می‌بندد و ذخیره می‌کند؛ ما فقط خبر می‌دهیم
+  // پایان زمان: پاسخ‌های محلی را می‌فرستیم و منتظر می‌مانیم سرور آزمون را
+  // ببندد (چرخهٔ ۲۰ ثانیه‌ای سرور مرجع است؛ ارسال خودکار از مرورگر لازم نیست)
   async function timeOver() {
     const box = document.getElementById("timeOver");
     if (box) box.classList.add("show");
-    for (let i = 0; i < 15; i++) {
+    try { await Promise.all(S.qids.map((qid) => save(qid))); } catch (err) {}
+    for (let i = 0; i < 45; i++) {
       try {
-        const r = await fetch("/exam/time");
+        const r = await fetch("/exam/time", { cache: "no-store" });
         if (r.ok) {
           const d = await r.json();
           if (!d.active) break;
@@ -522,14 +610,14 @@
     window.location.href = "/exam";
   }
 
-  // همگام‌سازی زمان با سرور هر ۳۰ ثانیه
+  // همگام‌سازی زمان با سرور هر ۳۰ ثانیه (و هر بار برگشت به صفحه)
   async function syncTime() {
     try {
-      const r = await fetch("/exam/time");
+      const r = await fetch("/exam/time", { cache: "no-store" });
       if (r.ok) {
         const d = await r.json();
         if (d.active && typeof d.remaining === "number") {
-          lastTick = d.remaining;
+          setRemaining(d.remaining);
           if (lastTick <= 0 && !submitted) { submitted = true; timeOver(); }
         } else if (!d.active && !submitted) window.location.href = "/exam";
       }
