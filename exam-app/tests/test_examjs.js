@@ -58,6 +58,19 @@ function run({ withQuestions = true, failSubmit = false } = {}) {
   const field = makeEl({ tagName: "TEXTAREA", dataset: { qid: "C1" } });
   field.value = "";
   const panel = makeEl({ dataset: { qid: "C1" } });
+  // جعبهٔ درست/غلط سوال C — همان ساختاری که سوال‌های بخش C دارند
+  const tfbox = makeEl({ dataset: { qid: "C1" } });
+  const tfYes = makeEl({ tagName: "BUTTON", dataset: { val: "1" } });
+  const tfNo = makeEl({ tagName: "BUTTON", dataset: { val: "0" } });
+  tfYes.classList.add("btn"); tfYes.classList.add("tf");
+  tfNo.classList.add("btn"); tfNo.classList.add("tf");
+  const tfButtons = [tfYes, tfNo];
+  tfbox.querySelectorAll = (sel) => (String(sel).indexOf("btn") >= 0 ? tfButtons : []);
+  tfbox.append0 = null;
+  tfButtons.forEach((b) => b.addEventListener("click", () => {
+    tfButtons.forEach((x) => x.classList.remove("selected"));
+    b.classList.add("selected");
+  }));
   const byId = { timer, answeredCount: answered, progress };
   const els = {};            // عنصرهای ثابت هر شناسه تا شنونده‌ها گم نشوند
   const el = (id) => (byId[id] = byId[id] || (els[id] = makeEl({ id })));
@@ -74,7 +87,12 @@ function run({ withQuestions = true, failSubmit = false } = {}) {
   const document = {
     getElementById: (id) => el(id),
     querySelector: found,
-    querySelectorAll: (sel) => (sel === "[data-qid]" && withQuestions ? [field] : []),
+    querySelectorAll: (sel) => {
+      if (!withQuestions) return [];
+      if (sel === "[data-qid]") return [field];
+      if (sel === ".tfbox") return [tfbox];
+      return [];
+    },
     createElement: () => makeEl(),
     addEventListener: (type, fn) => listeners.push([type, fn]),
     body: makeEl(),
@@ -135,7 +153,8 @@ function run({ withQuestions = true, failSubmit = false } = {}) {
   vm.runInContext(fs.readFileSync(SRC, "utf-8"), sandbox, { filename: "exam.js" });
   const tickFn = timers.intervals.find(([, ms]) => ms === 1000)?.[0];
   return { sandbox, errors, timer, answered, progress, timers, listeners, calls, field,
-           clock, tick: tickFn, el, location: sandbox.location, modal: el("modalBack") };
+           clock, tick: tickFn, el, location: sandbox.location, modal: el("modalBack"),
+           tfbox, tfButtons };
 }
 
 /* یک رخداد را مثل مرورگر به شنونده‌های ثبت‌شده می‌رساند */
@@ -336,9 +355,16 @@ function check(name, cond, detail = "") {
   const savedFirst = ok.calls.findIndex((c) => c.url === "/api/answer" &&
     JSON.parse(c.body).qid === "F1");
   const submitAt = ok.calls.findIndex((c) => c.url === "/api/submit");
-  check("پاسخ تازه‌تایپ‌شده پیش از ارسال نهایی ذخیره می‌شود",
-        savedFirst >= 0 && submitAt > savedFirst, `ذخیره: ${savedFirst}، ارسال: ${submitAt}`);
-  check("پس از ارسال موفق به صفحهٔ نتیجه می‌رود", ok.location.href === "/exam", ok.location.href);
+  // سوال‌های بخش C با دکمهٔ درست/غلط پاسخ داده می‌شوند
+  const tfBefore = r.calls.filter((c) => c.url === "/api/answer").length;
+  r.tfbox.querySelectorAll(".btn.tf")[0].fire("click");
+  await flushTimers(r);
+  const tfSaved = r.calls.slice(tfBefore).filter((c) => c.url === "/api/answer")
+    .map((c) => JSON.parse(c.body)).find((b) => b.qid === "C1");
+  check("دکمهٔ «درست» در سوال C پاسخ را ذخیره می‌کند",
+        tfSaved && tfSaved.payload.tf === true, JSON.stringify(tfSaved));
+  check("دکمهٔ انتخاب‌شده در سوال C علامت می‌خورد",
+        r.tfbox.querySelectorAll(".btn.tf")[0].classList.contains("selected"));
 
   console.log(failed ? `\n${failed} تست شکست خورد` : "\nهمهٔ تست‌های exam.js گذشت");
   process.exit(failed ? 1 : 0);

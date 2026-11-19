@@ -530,6 +530,40 @@ class TestHTTP(unittest.TestCase):
         multi = re.findall(r'<input type="checkbox" name="answer_multi_', html)
         self.assertTrue(multi, "سوال چندانتخابی گروه خودش را ندارد")
 
+    def test_18_exam_page_script_is_valid_javascript(self):
+        """بلوک اسکریپت داخل صفحهٔ آزمون باید نحوش سالم باشد.
+
+        یک نقل‌قولِ اشتباه در همین بلوک، فضای‌های نام (EXAM_STATE) را از بین
+        می‌برد و exam.js اصلاً اجرا نمی‌شود: تایمر «--:--» می‌ماند، گزینه‌ها
+        انتخاب نمی‌شوند و ارسال کار نمی‌کند. این تست همان خرابی را می‌گیرد.
+        """
+        import re
+        import shutil
+        import subprocess
+        import tempfile
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node در دسترس نیست")
+        admin = self.login("t_admin", "adminpass")
+        admin.post("/admin/create-user", {"username": "t_script", "display_name": "اسکریپت صفحه",
+                                          "password": "scriptpass"})
+        c = self.login("t_script", "scriptpass")
+        c.post("/exam/start")
+        _, html = c.get_text("/exam")
+        blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
+        self.assertTrue(blocks, "بلوک اسکریپت درون‌خطی صفحهٔ آزمون نیست")
+        for i, block in enumerate(blocks):
+            with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,
+                                             encoding="utf-8") as fh:
+                fh.write(block)
+                path = fh.name
+            try:
+                proc = subprocess.run([node, "--check", path], capture_output=True, text=True)
+            finally:
+                os.unlink(path)
+            self.assertEqual(proc.returncode, 0,
+                             f"بلوک اسکریپت {i} نحوش خراب است:\n{proc.stderr[:600]}")
+
     @staticmethod
     def _password(username):
         # رمزها هنگام ساخت کاربران به تصادف تولید می‌شوند؛ در setUpClass نگه داشته می‌شوند

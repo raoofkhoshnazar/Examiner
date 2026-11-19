@@ -563,7 +563,7 @@ def render_exam(user, attempt, answers):
         }}
         window.addEventListener("pagehide", function () {{
           Array.prototype.forEach.call(
-            document.querySelectorAll("textarea[data-qid], input[type=\"text\"][data-qid]"),
+            document.querySelectorAll('textarea[data-qid], input[type="text"][data-qid]'),
             flushTyped);
         }});
       }})();
